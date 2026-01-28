@@ -1,0 +1,756 @@
+"""
+SPY Iron Condor Trading Bot - Professional Edition
+With Full Greeks, Multiple Expirations, and Enhanced UI
+"""
+
+import streamlit as st
+import yfinance as yf
+import pandas as pd
+import numpy as np
+import plotly.graph_objects as go
+from datetime import datetime, timedelta
+import requests
+from typing import Dict, List, Tuple
+import time
+
+# Page configuration
+st.set_page_config(
+    page_title="SPY Iron Condor Pro",
+    page_icon="📊",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
+
+# Custom CSS for beautiful UI
+st.markdown("""
+<style>
+    .main-header {
+        font-size: 42px;
+        font-weight: bold;
+        color: #1f77b4;
+        text-align: center;
+        margin-bottom: 10px;
+        text-shadow: 2px 2px 4px rgba(0,0,0,0.1);
+    }
+    .sub-header {
+        font-size: 18px;
+        color: #666;
+        text-align: center;
+        margin-bottom: 30px;
+    }
+    .metric-card {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        padding: 20px;
+        border-radius: 10px;
+        color: white;
+        box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+    }
+    .greek-card {
+        background: #f8f9fa;
+        padding: 15px;
+        border-radius: 8px;
+        border-left: 4px solid #1f77b4;
+        margin: 10px 0;
+    }
+    .signal-strong-entry {
+        background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%);
+        padding: 20px;
+        border-radius: 10px;
+        color: white;
+        font-size: 24px;
+        font-weight: bold;
+        text-align: center;
+        box-shadow: 0 6px 12px rgba(0,0,0,0.15);
+    }
+    .signal-exit {
+        background: linear-gradient(135deg, #ee0979 0%, #ff6a00 100%);
+        padding: 20px;
+        border-radius: 10px;
+        color: white;
+        font-size: 24px;
+        font-weight: bold;
+        text-align: center;
+        box-shadow: 0 6px 12px rgba(0,0,0,0.15);
+    }
+    .signal-neutral {
+        background: linear-gradient(135deg, #f2994a 0%, #f2c94c 100%);
+        padding: 20px;
+        border-radius: 10px;
+        color: white;
+        font-size: 24px;
+        font-weight: bold;
+        text-align: center;
+        box-shadow: 0 6px 12px rgba(0,0,0,0.15);
+    }
+    .expiry-badge {
+        background: #e3f2fd;
+        color: #1976d2;
+        padding: 5px 12px;
+        border-radius: 15px;
+        font-weight: 600;
+        display: inline-block;
+        margin: 5px;
+    }
+    .optimal-badge {
+        background: #4caf50;
+        color: white;
+        padding: 5px 12px;
+        border-radius: 15px;
+        font-weight: 600;
+        display: inline-block;
+        animation: pulse 2s infinite;
+    }
+    @keyframes pulse {
+        0% { box-shadow: 0 0 0 0 rgba(76, 175, 80, 0.7); }
+        70% { box-shadow: 0 0 0 10px rgba(76, 175, 80, 0); }
+        100% { box-shadow: 0 0 0 0 rgba(76, 175, 80, 0); }
+    }
+    .strike-row {
+        padding: 10px;
+        border-bottom: 1px solid #e0e0e0;
+        transition: background 0.3s;
+    }
+    .strike-row:hover {
+        background: #f5f5f5;
+    }
+</style>
+""", unsafe_allow_html=True)
+
+# ==================== DATA FETCHING ====================
+
+@st.cache_data(ttl=300)  # Cache for 5 minutes
+def get_spy_data(period="5d", interval="1d"):
+    """Fetch SPY price data from Yahoo Finance"""
+    try:
+        spy = yf.Ticker("SPY")
+        df = spy.history(period=period, interval=interval)
+        if df.empty:
+            st.error("⚠️ Could not fetch SPY data. Using demo data.")
+            # Generate demo data
+            dates = pd.date_range(end=datetime.now(), periods=100, freq='1H')
+            df = pd.DataFrame({
+                'Close': 580 + np.random.randn(100).cumsum(),
+                'High': 581 + np.random.randn(100).cumsum(),
+                'Low': 579 + np.random.randn(100).cumsum(),
+                'Volume': np.random.randint(1000000, 5000000, 100)
+            }, index=dates)
+        return df
+    except Exception as e:
+        st.error(f"Error fetching data: {e}")
+        return pd.DataFrame()
+
+def get_tradier_options_chain(symbol="SPY", api_key=None):
+    """
+    Fetch options chain from Tradier API (sandbox or production)
+    Returns dict with expirations and full options data including Greeks
+    """
+    if not api_key:
+        # Demo mode - generate realistic fake data
+        return generate_demo_options_data()
+    
+    try:
+        # Tradier API endpoints
+        base_url = "https://sandbox.tradier.com/v1/markets"  # Use sandbox for free
+        headers = {
+            'Authorization': f'Bearer {api_key}',
+            'Accept': 'application/json'
+        }
+        
+        # Get expirations
+        exp_response = requests.get(
+            f"{base_url}/options/expirations",
+            params={'symbol': symbol},
+            headers=headers,
+            timeout=10
+        )
+        
+        if exp_response.status_code != 200:
+            return generate_demo_options_data()
+        
+        expirations = exp_response.json().get('expirations', {}).get('date', [])[:15]
+        
+        # Get options chains for each expiration
+        options_data = {}
+        for exp_date in expirations:
+            chain_response = requests.get(
+                f"{base_url}/options/chains",
+                params={'symbol': symbol, 'expiration': exp_date, 'greeks': 'true'},
+                headers=headers,
+                timeout=10
+            )
+            
+            if chain_response.status_code == 200:
+                chain = chain_response.json().get('options', {}).get('option', [])
+                options_data[exp_date] = chain
+        
+        return options_data
+        
+    except Exception as e:
+        st.warning(f"Tradier API error: {e}. Using demo data.")
+        return generate_demo_options_data()
+
+def generate_demo_options_data():
+    """Generate realistic demo options data with Greeks"""
+    current_price = 580  # SPY demo price
+    expirations = []
+    base_date = datetime.now()
+    
+    # Generate 15 expiration dates (weekly for 2 months, then monthly)
+    for i in range(8):
+        exp = base_date + timedelta(days=7*(i+1))
+        expirations.append(exp.strftime('%Y-%m-%d'))
+    for i in range(7):
+        exp = base_date + timedelta(days=60 + 30*i)
+        expirations.append(exp.strftime('%Y-%m-%d'))
+    
+    options_data = {}
+    
+    for exp_date in expirations:
+        days_to_exp = (datetime.strptime(exp_date, '%Y-%m-%d') - base_date).days
+        options = []
+        
+        # Generate strikes from -10% to +10% around current price
+        strikes = np.arange(
+            int(current_price * 0.85), 
+            int(current_price * 1.15), 
+            5
+        )
+        
+        for strike in strikes:
+            # Calculate realistic Greeks
+            moneyness = (strike - current_price) / current_price
+            
+            # Call options
+            call_delta = max(0.01, min(0.99, 0.5 + moneyness * 2))
+            call_gamma = 0.015 * np.exp(-abs(moneyness) * 10) / np.sqrt(days_to_exp)
+            call_theta = -0.05 * np.sqrt(days_to_exp)
+            call_vega = 0.15 * np.sqrt(days_to_exp)
+            
+            # Put options
+            put_delta = -(1 - call_delta)
+            put_gamma = call_gamma
+            put_theta = call_theta
+            put_vega = call_vega
+            
+            # Pricing (simplified Black-Scholes approximation)
+            iv = 0.15 + abs(moneyness) * 0.3  # IV smile
+            call_price = max(0.05, (current_price - strike) * call_delta + iv * 10)
+            put_price = max(0.05, (strike - current_price) * abs(put_delta) + iv * 10)
+            
+            # Call option
+            options.append({
+                'symbol': f'SPY{exp_date.replace("-", "")}C{int(strike*1000)}',
+                'strike': strike,
+                'type': 'call',
+                'expiration_date': exp_date,
+                'bid': round(call_price * 0.98, 2),
+                'ask': round(call_price * 1.02, 2),
+                'last': round(call_price, 2),
+                'volume': int(np.random.exponential(1000)),
+                'open_interest': int(np.random.exponential(5000)),
+                'greeks': {
+                    'delta': round(call_delta, 4),
+                    'gamma': round(call_gamma, 4),
+                    'theta': round(call_theta, 4),
+                    'vega': round(call_vega, 4),
+                    'rho': round(0.01 * days_to_exp / 365, 4)
+                },
+                'iv': round(iv, 4)
+            })
+            
+            # Put option
+            options.append({
+                'symbol': f'SPY{exp_date.replace("-", "")}P{int(strike*1000)}',
+                'strike': strike,
+                'type': 'put',
+                'expiration_date': exp_date,
+                'bid': round(put_price * 0.98, 2),
+                'ask': round(put_price * 1.02, 2),
+                'last': round(put_price, 2),
+                'volume': int(np.random.exponential(1000)),
+                'open_interest': int(np.random.exponential(5000)),
+                'greeks': {
+                    'delta': round(put_delta, 4),
+                    'gamma': round(put_gamma, 4),
+                    'theta': round(put_theta, 4),
+                    'vega': round(put_vega, 4),
+                    'rho': round(-0.01 * days_to_exp / 365, 4)
+                },
+                'iv': round(iv, 4)
+            })
+        
+        options_data[exp_date] = options
+    
+    return options_data
+
+# ==================== ANALYSIS FUNCTIONS ====================
+
+def calculate_indicators(df):
+    """Calculate technical indicators for Iron Condor signals"""
+    if df.empty or len(df) < 50:
+        return df
+    
+    # Bollinger Bands
+    df['SMA20'] = df['Close'].rolling(20).mean()
+    df['BB_std'] = df['Close'].rolling(20).std()
+    df['BB_upper'] = df['SMA20'] + (df['BB_std'] * 2)
+    df['BB_lower'] = df['SMA20'] - (df['BB_std'] * 2)
+    df['BB_width'] = ((df['BB_upper'] - df['BB_lower']) / df['SMA20']) * 100
+    
+    # RSI
+    delta = df['Close'].diff()
+    gain = (delta.where(delta > 0, 0)).rolling(14).mean()
+    loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
+    rs = gain / loss
+    df['RSI'] = 100 - (100 / (1 + rs))
+    
+    # MACD
+    df['EMA12'] = df['Close'].ewm(span=12).mean()
+    df['EMA26'] = df['Close'].ewm(span=26).mean()
+    df['MACD'] = df['EMA12'] - df['EMA26']
+    df['MACD_signal'] = df['MACD'].ewm(span=9).mean()
+    
+    # ATR
+    df['TR'] = df[['High', 'Low', 'Close']].apply(
+        lambda x: max(x['High'] - x['Low'], 
+                     abs(x['High'] - x['Close']), 
+                     abs(x['Low'] - x['Close'])), axis=1
+    )
+    df['ATR'] = df['TR'].rolling(14).mean()
+    df['ATR_pct'] = (df['ATR'] / df['Close']) * 100
+    
+    return df
+
+def calculate_iron_condor_score(df, current_price):
+    """Calculate Entry and Risk scores for Iron Condor strategy"""
+    if df.empty or len(df) < 50:
+        return 0, 9, "NEUTRAL"
+    
+    latest = df.iloc[-1]
+    
+    # Entry conditions (0-9 scale)
+    entry_score = 0
+    risk_score = 0
+    
+    # 1. RSI in neutral zone (40-60) - best for Iron Condor
+    rsi = latest['RSI']
+    if 45 <= rsi <= 55:
+        entry_score += 2
+    elif 40 <= rsi <= 60:
+        entry_score += 1
+    elif rsi < 30 or rsi > 70:
+        risk_score += 2
+    
+    # 2. Price in middle of Bollinger Bands
+    bb_position = (current_price - latest['BB_lower']) / (latest['BB_upper'] - latest['BB_lower'])
+    if 0.4 <= bb_position <= 0.6:
+        entry_score += 2
+    elif 0.3 <= bb_position <= 0.7:
+        entry_score += 1
+    elif bb_position < 0.2 or bb_position > 0.8:
+        risk_score += 2
+    
+    # 3. Low volatility (narrow BB width)
+    if latest['BB_width'] < 5:
+        entry_score += 2
+    elif latest['BB_width'] < 7:
+        entry_score += 1
+    elif latest['BB_width'] > 10:
+        risk_score += 2
+    
+    # 4. Low ATR (calm market)
+    if latest['ATR_pct'] < 0.8:
+        entry_score += 2
+    elif latest['ATR_pct'] < 1.2:
+        entry_score += 1
+    elif latest['ATR_pct'] > 2.0:
+        risk_score += 2
+    
+    # 5. MACD near zero (no strong trend)
+    macd_strength = abs(latest['MACD'] / current_price) * 100
+    if macd_strength < 0.3:
+        entry_score += 1
+    elif macd_strength > 1.0:
+        risk_score += 1
+    
+    # Determine signal
+    if entry_score >= 6 and risk_score <= 3:
+        signal = "STRONG ENTRY"
+    elif entry_score >= 4 and risk_score <= 4:
+        signal = "ENTRY"
+    elif risk_score >= 6:
+        signal = "EXIT / AVOID"
+    elif risk_score >= 5:
+        signal = "CAUTION"
+    else:
+        signal = "NEUTRAL"
+    
+    return entry_score, risk_score, signal
+
+def find_iron_condor_strikes(options_data, expiration, current_price, target_delta=0.20):
+    """Find optimal Iron Condor strikes based on delta"""
+    if expiration not in options_data:
+        return None
+    
+    options = options_data[expiration]
+    
+    # Separate calls and puts
+    calls = [opt for opt in options if opt['type'] == 'call' and opt['strike'] > current_price]
+    puts = [opt for opt in options if opt['type'] == 'put' and opt['strike'] < current_price]
+    
+    # Sort by strike
+    calls = sorted(calls, key=lambda x: x['strike'])
+    puts = sorted(puts, key=lambda x: x['strike'], reverse=True)
+    
+    # Find strikes closest to target delta
+    def find_closest_delta(opts, target):
+        return min(opts, key=lambda x: abs(abs(x['greeks']['delta']) - target), default=None)
+    
+    short_call = find_closest_delta(calls, target_delta)
+    short_put = find_closest_delta(puts, target_delta)
+    
+    if not short_call or not short_put:
+        return None
+    
+    # Find long strikes (1 strike width out)
+    long_call = next((c for c in calls if c['strike'] > short_call['strike']), None)
+    long_put = next((p for p in puts if p['strike'] < short_put['strike']), None)
+    
+    if not long_call or not long_put:
+        return None
+    
+    # Calculate P&L
+    credit = (short_call['bid'] + short_put['bid'] - long_call['ask'] - long_put['ask']) * 100
+    max_loss = (max(short_call['strike'] - long_call['strike'], 
+                    short_put['strike'] - long_put['strike']) * 100) - credit
+    
+    return {
+        'short_call': short_call,
+        'long_call': long_call,
+        'short_put': short_put,
+        'long_put': long_put,
+        'max_profit': credit,
+        'max_loss': max_loss,
+        'breakeven_upper': short_call['strike'] + (credit / 100),
+        'breakeven_lower': short_put['strike'] - (credit / 100),
+        'pop': round((1 - abs(short_call['greeks']['delta']) - abs(short_put['greeks']['delta'])) * 100, 1)
+    }
+
+# ==================== UI COMPONENTS ====================
+
+def display_header():
+    """Display app header"""
+    st.markdown('<div class="main-header">📊 SPY IRON CONDOR PRO</div>', unsafe_allow_html=True)
+    st.markdown('<div class="sub-header">Real-Time Signals with Full Greeks & Multiple Expirations</div>', unsafe_allow_html=True)
+
+def display_current_metrics(df, current_price, entry_score, risk_score, signal):
+    """Display current trading metrics"""
+    col1, col2, col3, col4, col5 = st.columns(5)
+    
+    latest = df.iloc[-1]
+    price_change = ((current_price - df.iloc[-2]['Close']) / df.iloc[-2]['Close']) * 100 if len(df) > 1 else 0
+    
+    with col1:
+        st.metric(
+            "SPY Price",
+            f"${current_price:.2f}",
+            f"{price_change:+.2f}%"
+        )
+    
+    with col2:
+        st.metric(
+            "Entry Score",
+            f"{entry_score}/9",
+            "Good" if entry_score >= 6 else "Low"
+        )
+    
+    with col3:
+        st.metric(
+            "Risk Score",
+            f"{risk_score}/9",
+            "High" if risk_score >= 5 else "Low"
+        )
+    
+    with col4:
+        st.metric(
+            "RSI",
+            f"{latest['RSI']:.1f}",
+            "Neutral" if 40 <= latest['RSI'] <= 60 else "Extreme"
+        )
+    
+    with col5:
+        st.metric(
+            "Volatility",
+            f"{latest['ATR_pct']:.2f}%",
+            "Low" if latest['ATR_pct'] < 1.0 else "High"
+        )
+
+def display_signal_box(signal):
+    """Display trading signal"""
+    if signal == "STRONG ENTRY" or signal == "ENTRY":
+        st.markdown(f'<div class="signal-strong-entry">🟢 {signal}</div>', unsafe_allow_html=True)
+    elif signal == "EXIT / AVOID" or signal == "CAUTION":
+        st.markdown(f'<div class="signal-exit">🔴 {signal}</div>', unsafe_allow_html=True)
+    else:
+        st.markdown(f'<div class="signal-neutral">🟡 {signal}</div>', unsafe_allow_html=True)
+
+def display_iron_condor_setups(options_data, current_price, selected_expiry):
+    """Display Iron Condor setups for 16Δ, 20Δ, and 30Δ"""
+    st.markdown("### 🎯 Iron Condor Strike Recommendations")
+    
+    deltas = [
+        (0.16, "CONSERVATIVE", "🛡️ Highest probability (~75%)"),
+        (0.20, "BALANCED ⭐ OPTIMAL", "⚖️ Best risk/reward (~70%)"),
+        (0.30, "AGGRESSIVE", "💰 Higher premium (~65%)")
+    ]
+    
+    for target_delta, setup_name, description in deltas:
+        with st.expander(f"**{setup_name}** - {description}", expanded=(target_delta == 0.20)):
+            ic_setup = find_iron_condor_strikes(options_data, selected_expiry, current_price, target_delta)
+            
+            if not ic_setup:
+                st.warning("⚠️ Could not find suitable strikes for this delta")
+                continue
+            
+            # Display strikes in a nice table
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                st.markdown("#### CALL SPREAD (Credit)")
+                display_strike_card(ic_setup['short_call'], "Short Call (Sell)", is_short=True)
+                display_strike_card(ic_setup['long_call'], "Long Call (Buy)", is_short=False)
+            
+            with col2:
+                st.markdown("#### PUT SPREAD (Credit)")
+                display_strike_card(ic_setup['short_put'], "Short Put (Sell)", is_short=True)
+                display_strike_card(ic_setup['long_put'], "Long Put (Buy)", is_short=False)
+            
+            # P&L Summary
+            st.markdown("---")
+            c1, c2, c3, c4 = st.columns(4)
+            with c1:
+                st.metric("Max Profit", f"${ic_setup['max_profit']:.2f}")
+            with c2:
+                st.metric("Max Loss", f"${ic_setup['max_loss']:.2f}")
+            with c3:
+                st.metric("Probability of Profit", f"{ic_setup['pop']}%")
+            with c4:
+                ratio = ic_setup['max_profit'] / ic_setup['max_loss'] if ic_setup['max_loss'] > 0 else 0
+                st.metric("Risk/Reward", f"1:{ratio:.2f}")
+            
+            # Breakevens
+            st.info(f"📍 **Breakeven Points:** Lower: ${ic_setup['breakeven_lower']:.2f} | Upper: ${ic_setup['breakeven_upper']:.2f}")
+
+def display_strike_card(option, label, is_short):
+    """Display individual strike information with Greeks"""
+    greeks = option['greeks']
+    
+    badge_color = "#4caf50" if is_short else "#2196f3"
+    
+    st.markdown(f"""
+    <div style="background: {badge_color}; color: white; padding: 15px; border-radius: 8px; margin: 10px 0;">
+        <div style="font-weight: bold; font-size: 16px; margin-bottom: 10px;">{label}</div>
+        <div style="font-size: 24px; font-weight: bold; margin-bottom: 10px;">
+            ${option['strike']} Strike
+        </div>
+        <div style="font-size: 14px; opacity: 0.9;">
+            <b>Price:</b> ${option['last']:.2f} (Bid: ${option['bid']:.2f} / Ask: ${option['ask']:.2f})<br>
+            <b>Delta:</b> {greeks['delta']:.4f} | <b>Gamma:</b> {greeks['gamma']:.4f}<br>
+            <b>Theta:</b> {greeks['theta']:.4f} | <b>Vega:</b> {greeks['vega']:.4f}<br>
+            <b>Rho:</b> {greeks['rho']:.4f} | <b>IV:</b> {option['iv']*100:.1f}%<br>
+            <b>Volume:</b> {option['volume']:,} | <b>OI:</b> {option['open_interest']:,}
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+def display_full_options_chain(options_data, selected_expiry, current_price):
+    """Display full options chain with all Greeks"""
+    st.markdown("### 📋 Full Options Chain")
+    
+    if selected_expiry not in options_data:
+        st.warning("No options data available for this expiration")
+        return
+    
+    options = options_data[selected_expiry]
+    
+    # Create DataFrame
+    chain_data = []
+    for opt in options:
+        chain_data.append({
+            'Strike': opt['strike'],
+            'Type': opt['type'].upper(),
+            'Last': opt['last'],
+            'Bid': opt['bid'],
+            'Ask': opt['ask'],
+            'Delta': opt['greeks']['delta'],
+            'Gamma': opt['greeks']['gamma'],
+            'Theta': opt['greeks']['theta'],
+            'Vega': opt['greeks']['vega'],
+            'Rho': opt['greeks']['rho'],
+            'IV': f"{opt['iv']*100:.1f}%",
+            'Volume': opt['volume'],
+            'OI': opt['open_interest']
+        })
+    
+    df_chain = pd.DataFrame(chain_data)
+    
+    # Filter around current price
+    df_filtered = df_chain[
+        (df_chain['Strike'] >= current_price - 30) & 
+        (df_chain['Strike'] <= current_price + 30)
+    ].sort_values('Strike')
+    
+    # Highlight at-the-money strikes
+    def highlight_atm(row):
+        if abs(row['Strike'] - current_price) < 5:
+            return ['background-color: #fff3cd'] * len(row)
+        return [''] * len(row)
+    
+    st.dataframe(
+        df_filtered.style.apply(highlight_atm, axis=1).format({
+            'Last': '${:.2f}',
+            'Bid': '${:.2f}',
+            'Ask': '${:.2f}',
+            'Delta': '{:.4f}',
+            'Gamma': '{:.4f}',
+            'Theta': '{:.4f}',
+            'Vega': '{:.4f}',
+            'Rho': '{:.4f}',
+            'Volume': '{:,.0f}',
+            'OI': '{:,.0f}'
+        }),
+        use_container_width=True,
+        height=400
+    )
+
+# ==================== MAIN APP ====================
+
+def main():
+    display_header()
+    
+    # Sidebar
+    with st.sidebar:
+        st.markdown("## ⚙️ Settings")
+        
+        # Tradier API key (optional)
+        api_key = st.text_input(
+            "Tradier API Key (optional)",
+            type="password",
+            help="Get free sandbox API key at developer.tradier.com"
+        )
+        
+        if not api_key:
+            st.info("💡 Using demo data. Add Tradier API key for real-time options data.")
+        
+        # Timeframe selection
+        timeframe_map = {
+            "Daily": ("5d", "1d"),
+            "1 Hour": ("5d", "1h"),
+            "30 Minutes": ("2d", "30m"),
+            "15 Minutes": ("1d", "15m")
+        }
+        
+        timeframe_label = st.selectbox(
+            "Chart Timeframe",
+            list(timeframe_map.keys()),
+            index=0
+        )
+        period, interval = timeframe_map[timeframe_label]
+        
+        # Auto-refresh
+        auto_refresh = st.checkbox("Auto-refresh (60s)", value=False)
+        
+        if auto_refresh:
+            st_autorefresh = st.empty()
+            time.sleep(60)
+            st.rerun()
+        
+        # Info
+        st.markdown("---")
+        st.markdown("### 📊 Strategy Info")
+        st.markdown("""
+        **Iron Condor** profits when SPY stays within a range.
+        
+        **Best Conditions:**
+        - Low volatility
+        - RSI 40-60
+        - Price in BB middle
+        - Weak trend
+        
+        **Exit When:**
+        - Volatility spikes
+        - Strong directional move
+        - 50% profit reached
+        - 21 DTE or less
+        """)
+    
+    # Fetch data
+    with st.spinner("📡 Fetching SPY data..."):
+        df = get_spy_data(period=period, interval=interval)
+        
+        if df.empty:
+            st.error("❌ Could not load data. Please refresh.")
+            st.stop()
+        
+        df = calculate_indicators(df)
+        current_price = df['Close'].iloc[-1]
+        
+        # Fetch options data
+        options_data = get_tradier_options_chain("SPY", api_key)
+        
+        if not options_data:
+            st.error("❌ No options data available")
+            st.stop()
+        
+        expirations = list(options_data.keys())
+    
+    # Calculate signals
+    entry_score, risk_score, signal = calculate_iron_condor_score(df, current_price)
+    
+    # Display metrics
+    display_current_metrics(df, current_price, entry_score, risk_score, signal)
+    
+    st.markdown("---")
+    
+    # Signal box
+    display_signal_box(signal)
+    
+    st.markdown("---")
+    
+    # Expiration selector
+    st.markdown("### 📅 Select Expiration Date")
+    
+    expiry_cols = st.columns(min(5, len(expirations)))
+    selected_expiry = expirations[0]
+    
+    for idx, exp_date in enumerate(expirations[:15]):
+        col_idx = idx % 5
+        days_to_exp = (datetime.strptime(exp_date, '%Y-%m-%d') - datetime.now()).days
+        
+        with expiry_cols[col_idx]:
+            if st.button(f"{exp_date}\n({days_to_exp}d)", key=f"exp_{exp_date}"):
+                selected_expiry = exp_date
+    
+    st.markdown(f"**Selected Expiration:** <span class='expiry-badge'>{selected_expiry} ({(datetime.strptime(selected_expiry, '%Y-%m-%d') - datetime.now()).days} days)</span>", unsafe_allow_html=True)
+    
+    st.markdown("---")
+    
+    # Iron Condor setups
+    display_iron_condor_setups(options_data, current_price, selected_expiry)
+    
+    st.markdown("---")
+    
+    # Full options chain
+    display_full_options_chain(options_data, selected_expiry, current_price)
+    
+    # Footer
+    st.markdown("---")
+    st.markdown("""
+    <div style="text-align: center; color: #666; font-size: 12px;">
+        <b>⚠️ DISCLAIMER:</b> This tool is for educational purposes only. Not financial advice. 
+        Trade at your own risk. Past performance does not guarantee future results.
+    </div>
+    """, unsafe_allow_html=True)
+
+if __name__ == "__main__":
+    main()
