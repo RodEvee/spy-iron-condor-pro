@@ -118,26 +118,32 @@ st.markdown("""
 
 # ==================== DATA FETCHING ====================
 
-@st.cache_data(ttl=300)  # Cache for 5 minutes
+@st.cache_data(ttl=300)
 def get_spy_data(period="5d", interval="1d"):
     """Fetch SPY price data from Yahoo Finance"""
     try:
         spy = yf.Ticker("SPY")
         df = spy.history(period=period, interval=interval)
+        
         if df.empty:
-            st.error("⚠️ Could not fetch SPY data. Using demo data.")
-            # Generate demo data
-            dates = pd.date_range(end=datetime.now(), periods=100, freq='1H')
-            df = pd.DataFrame({
-                'Close': 580 + np.random.randn(100).cumsum(),
-                'High': 581 + np.random.randn(100).cumsum(),
-                'Low': 579 + np.random.randn(100).cumsum(),
-                'Volume': np.random.randint(1000000, 5000000, 100)
-            }, index=dates)
+            st.warning("⚠️ Could not fetch SPY data. Using demo data.")
+            return generate_demo_price_data()
+        
         return df
     except Exception as e:
-        st.error(f"Error fetching data: {e}")
-        return pd.DataFrame()
+        st.warning(f"⚠️ Data fetch error: {e}. Using demo data.")
+        return generate_demo_price_data()
+
+def generate_demo_price_data():
+    """Generate demo price data for testing"""
+    dates = pd.date_range(end=datetime.now(), periods=100, freq='1H')
+    df = pd.DataFrame({
+        'Close': 580 + np.random.randn(100).cumsum() * 2,
+        'High': 582 + np.random.randn(100).cumsum() * 2,
+        'Low': 578 + np.random.randn(100).cumsum() * 2,
+        'Volume': np.random.randint(1000000, 5000000, 100)
+    }, index=dates)
+    return df
 
 def get_tradier_options_chain(symbol="SPY", api_key=None):
     """
@@ -150,7 +156,7 @@ def get_tradier_options_chain(symbol="SPY", api_key=None):
     
     try:
         # Tradier API endpoints
-        base_url = "https://sandbox.tradier.com/v1/markets"  # Use sandbox for free
+        base_url = "https://sandbox.tradier.com/v1/markets"
         headers = {
             'Authorization': f'Bearer {api_key}',
             'Accept': 'application/json'
@@ -186,7 +192,7 @@ def get_tradier_options_chain(symbol="SPY", api_key=None):
         return options_data
         
     except Exception as e:
-        st.warning(f"Tradier API error: {e}. Using demo data.")
+        st.warning(f"⚠️ Tradier API error: {e}. Using demo data.")
         return generate_demo_options_data()
 
 def generate_demo_options_data():
@@ -195,7 +201,7 @@ def generate_demo_options_data():
     expirations = []
     base_date = datetime.now()
     
-    # Generate 15 expiration dates (weekly for 2 months, then monthly)
+    # Generate 15 expiration dates
     for i in range(8):
         exp = base_date + timedelta(days=7*(i+1))
         expirations.append(exp.strftime('%Y-%m-%d'))
@@ -209,7 +215,7 @@ def generate_demo_options_data():
         days_to_exp = (datetime.strptime(exp_date, '%Y-%m-%d') - base_date).days
         options = []
         
-        # Generate strikes from -10% to +10% around current price
+        # Generate strikes
         strikes = np.arange(
             int(current_price * 0.85), 
             int(current_price * 1.15), 
@@ -217,23 +223,20 @@ def generate_demo_options_data():
         )
         
         for strike in strikes:
-            # Calculate realistic Greeks
             moneyness = (strike - current_price) / current_price
             
             # Call options
             call_delta = max(0.01, min(0.99, 0.5 + moneyness * 2))
-            call_gamma = 0.015 * np.exp(-abs(moneyness) * 10) / np.sqrt(days_to_exp)
-            call_theta = -0.05 * np.sqrt(days_to_exp)
-            call_vega = 0.15 * np.sqrt(days_to_exp)
+            call_gamma = 0.015 * np.exp(-abs(moneyness) * 10) / np.sqrt(max(days_to_exp, 1))
+            call_theta = -0.05 * np.sqrt(max(days_to_exp, 1))
+            call_vega = 0.15 * np.sqrt(max(days_to_exp, 1))
             
-            # Put options
             put_delta = -(1 - call_delta)
             put_gamma = call_gamma
             put_theta = call_theta
             put_vega = call_vega
             
-            # Pricing (simplified Black-Scholes approximation)
-            iv = 0.15 + abs(moneyness) * 0.3  # IV smile
+            iv = 0.15 + abs(moneyness) * 0.3
             call_price = max(0.05, (current_price - strike) * call_delta + iv * 10)
             put_price = max(0.05, (strike - current_price) * abs(put_delta) + iv * 10)
             
@@ -290,102 +293,126 @@ def calculate_indicators(df):
     if df.empty or len(df) < 50:
         return df
     
-    # Bollinger Bands
-    df['SMA20'] = df['Close'].rolling(20).mean()
-    df['BB_std'] = df['Close'].rolling(20).std()
-    df['BB_upper'] = df['SMA20'] + (df['BB_std'] * 2)
-    df['BB_lower'] = df['SMA20'] - (df['BB_std'] * 2)
-    df['BB_width'] = ((df['BB_upper'] - df['BB_lower']) / df['SMA20']) * 100
-    
-    # RSI
-    delta = df['Close'].diff()
-    gain = (delta.where(delta > 0, 0)).rolling(14).mean()
-    loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
-    rs = gain / loss
-    df['RSI'] = 100 - (100 / (1 + rs))
-    
-    # MACD
-    df['EMA12'] = df['Close'].ewm(span=12).mean()
-    df['EMA26'] = df['Close'].ewm(span=26).mean()
-    df['MACD'] = df['EMA12'] - df['EMA26']
-    df['MACD_signal'] = df['MACD'].ewm(span=9).mean()
-    
-    # ATR
-    df['TR'] = df[['High', 'Low', 'Close']].apply(
-        lambda x: max(x['High'] - x['Low'], 
-                     abs(x['High'] - x['Close']), 
-                     abs(x['Low'] - x['Close'])), axis=1
-    )
-    df['ATR'] = df['TR'].rolling(14).mean()
-    df['ATR_pct'] = (df['ATR'] / df['Close']) * 100
+    try:
+        # Bollinger Bands
+        df['SMA20'] = df['Close'].rolling(20, min_periods=1).mean()
+        df['BB_std'] = df['Close'].rolling(20, min_periods=1).std()
+        df['BB_upper'] = df['SMA20'] + (df['BB_std'] * 2)
+        df['BB_lower'] = df['SMA20'] - (df['BB_std'] * 2)
+        df['BB_width'] = ((df['BB_upper'] - df['BB_lower']) / df['SMA20']) * 100
+        
+        # RSI
+        delta = df['Close'].diff()
+        gain = (delta.where(delta > 0, 0)).rolling(14, min_periods=1).mean()
+        loss = (-delta.where(delta < 0, 0)).rolling(14, min_periods=1).mean()
+        rs = gain / (loss + 0.0001)  # Avoid division by zero
+        df['RSI'] = 100 - (100 / (1 + rs))
+        
+        # MACD
+        df['EMA12'] = df['Close'].ewm(span=12, adjust=False).mean()
+        df['EMA26'] = df['Close'].ewm(span=26, adjust=False).mean()
+        df['MACD'] = df['EMA12'] - df['EMA26']
+        df['MACD_signal'] = df['MACD'].ewm(span=9, adjust=False).mean()
+        
+        # ATR
+        high_low = df['High'] - df['Low']
+        high_close = (df['High'] - df['Close'].shift()).abs()
+        low_close = (df['Low'] - df['Close'].shift()).abs()
+        
+        df['TR'] = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
+        df['ATR'] = df['TR'].rolling(14, min_periods=1).mean()
+        df['ATR_pct'] = (df['ATR'] / df['Close']) * 100
+        
+        # Fill NaN values
+        df = df.fillna(method='bfill').fillna(method='ffill').fillna(0)
+        
+    except Exception as e:
+        st.warning(f"⚠️ Indicator calculation error: {e}")
     
     return df
 
 def calculate_iron_condor_score(df, current_price):
     """Calculate Entry and Risk scores for Iron Condor strategy"""
-    if df.empty or len(df) < 50:
+    if df.empty or len(df) < 20:
         return 0, 9, "NEUTRAL"
     
-    latest = df.iloc[-1]
-    
-    # Entry conditions (0-9 scale)
-    entry_score = 0
-    risk_score = 0
-    
-    # 1. RSI in neutral zone (40-60) - best for Iron Condor
-    rsi = latest['RSI']
-    if 45 <= rsi <= 55:
-        entry_score += 2
-    elif 40 <= rsi <= 60:
-        entry_score += 1
-    elif rsi < 30 or rsi > 70:
-        risk_score += 2
-    
-    # 2. Price in middle of Bollinger Bands
-    bb_position = (current_price - latest['BB_lower']) / (latest['BB_upper'] - latest['BB_lower'])
-    if 0.4 <= bb_position <= 0.6:
-        entry_score += 2
-    elif 0.3 <= bb_position <= 0.7:
-        entry_score += 1
-    elif bb_position < 0.2 or bb_position > 0.8:
-        risk_score += 2
-    
-    # 3. Low volatility (narrow BB width)
-    if latest['BB_width'] < 5:
-        entry_score += 2
-    elif latest['BB_width'] < 7:
-        entry_score += 1
-    elif latest['BB_width'] > 10:
-        risk_score += 2
-    
-    # 4. Low ATR (calm market)
-    if latest['ATR_pct'] < 0.8:
-        entry_score += 2
-    elif latest['ATR_pct'] < 1.2:
-        entry_score += 1
-    elif latest['ATR_pct'] > 2.0:
-        risk_score += 2
-    
-    # 5. MACD near zero (no strong trend)
-    macd_strength = abs(latest['MACD'] / current_price) * 100
-    if macd_strength < 0.3:
-        entry_score += 1
-    elif macd_strength > 1.0:
-        risk_score += 1
-    
-    # Determine signal
-    if entry_score >= 6 and risk_score <= 3:
-        signal = "STRONG ENTRY"
-    elif entry_score >= 4 and risk_score <= 4:
-        signal = "ENTRY"
-    elif risk_score >= 6:
-        signal = "EXIT / AVOID"
-    elif risk_score >= 5:
-        signal = "CAUTION"
-    else:
-        signal = "NEUTRAL"
-    
-    return entry_score, risk_score, signal
+    try:
+        latest = df.iloc[-1]
+        
+        # Check if required columns exist
+        required_cols = ['RSI', 'BB_lower', 'BB_upper', 'BB_width', 'ATR_pct', 'MACD']
+        for col in required_cols:
+            if col not in df.columns or pd.isna(latest.get(col, np.nan)):
+                return 0, 9, "NEUTRAL"
+        
+        entry_score = 0
+        risk_score = 0
+        
+        # 1. RSI in neutral zone (40-60)
+        rsi = latest['RSI']
+        if pd.notna(rsi):
+            if 45 <= rsi <= 55:
+                entry_score += 2
+            elif 40 <= rsi <= 60:
+                entry_score += 1
+            elif rsi < 30 or rsi > 70:
+                risk_score += 2
+        
+        # 2. Price in middle of Bollinger Bands
+        if pd.notna(latest['BB_lower']) and pd.notna(latest['BB_upper']):
+            bb_range = latest['BB_upper'] - latest['BB_lower']
+            if bb_range > 0:
+                bb_position = (current_price - latest['BB_lower']) / bb_range
+                if 0.4 <= bb_position <= 0.6:
+                    entry_score += 2
+                elif 0.3 <= bb_position <= 0.7:
+                    entry_score += 1
+                elif bb_position < 0.2 or bb_position > 0.8:
+                    risk_score += 2
+        
+        # 3. Low volatility
+        if pd.notna(latest['BB_width']):
+            if latest['BB_width'] < 5:
+                entry_score += 2
+            elif latest['BB_width'] < 7:
+                entry_score += 1
+            elif latest['BB_width'] > 10:
+                risk_score += 2
+        
+        # 4. Low ATR
+        if pd.notna(latest['ATR_pct']):
+            if latest['ATR_pct'] < 0.8:
+                entry_score += 2
+            elif latest['ATR_pct'] < 1.2:
+                entry_score += 1
+            elif latest['ATR_pct'] > 2.0:
+                risk_score += 2
+        
+        # 5. MACD near zero
+        if pd.notna(latest['MACD']) and current_price > 0:
+            macd_strength = abs(latest['MACD'] / current_price) * 100
+            if macd_strength < 0.3:
+                entry_score += 1
+            elif macd_strength > 1.0:
+                risk_score += 1
+        
+        # Determine signal
+        if entry_score >= 6 and risk_score <= 3:
+            signal = "STRONG ENTRY"
+        elif entry_score >= 4 and risk_score <= 4:
+            signal = "ENTRY"
+        elif risk_score >= 6:
+            signal = "EXIT / AVOID"
+        elif risk_score >= 5:
+            signal = "CAUTION"
+        else:
+            signal = "NEUTRAL"
+        
+        return entry_score, risk_score, signal
+        
+    except Exception as e:
+        st.warning(f"⚠️ Score calculation error: {e}")
+        return 0, 9, "NEUTRAL"
 
 def find_iron_condor_strikes(options_data, expiration, current_price, target_delta=0.20):
     """Find optimal Iron Condor strikes based on delta"""
@@ -398,13 +425,18 @@ def find_iron_condor_strikes(options_data, expiration, current_price, target_del
     calls = [opt for opt in options if opt['type'] == 'call' and opt['strike'] > current_price]
     puts = [opt for opt in options if opt['type'] == 'put' and opt['strike'] < current_price]
     
+    if not calls or not puts:
+        return None
+    
     # Sort by strike
     calls = sorted(calls, key=lambda x: x['strike'])
     puts = sorted(puts, key=lambda x: x['strike'], reverse=True)
     
     # Find strikes closest to target delta
     def find_closest_delta(opts, target):
-        return min(opts, key=lambda x: abs(abs(x['greeks']['delta']) - target), default=None)
+        if not opts:
+            return None
+        return min(opts, key=lambda x: abs(abs(x['greeks']['delta']) - target))
     
     short_call = find_closest_delta(calls, target_delta)
     short_put = find_closest_delta(puts, target_delta)
@@ -421,7 +453,7 @@ def find_iron_condor_strikes(options_data, expiration, current_price, target_del
     
     # Calculate P&L
     credit = (short_call['bid'] + short_put['bid'] - long_call['ask'] - long_put['ask']) * 100
-    max_loss = (max(short_call['strike'] - long_call['strike'], 
+    max_loss = (max(long_call['strike'] - short_call['strike'], 
                     short_put['strike'] - long_put['strike']) * 100) - credit
     
     return {
@@ -429,10 +461,10 @@ def find_iron_condor_strikes(options_data, expiration, current_price, target_del
         'long_call': long_call,
         'short_put': short_put,
         'long_put': long_put,
-        'max_profit': credit,
-        'max_loss': max_loss,
-        'breakeven_upper': short_call['strike'] + (credit / 100),
-        'breakeven_lower': short_put['strike'] - (credit / 100),
+        'max_profit': max(credit, 0),
+        'max_loss': max(max_loss, 0),
+        'breakeven_upper': short_call['strike'] + (max(credit, 0) / 100),
+        'breakeven_lower': short_put['strike'] - (max(credit, 0) / 100),
         'pop': round((1 - abs(short_call['greeks']['delta']) - abs(short_put['greeks']['delta'])) * 100, 1)
     }
 
@@ -447,8 +479,12 @@ def display_current_metrics(df, current_price, entry_score, risk_score, signal):
     """Display current trading metrics"""
     col1, col2, col3, col4, col5 = st.columns(5)
     
+    if len(df) < 2:
+        price_change = 0
+    else:
+        price_change = ((current_price - df.iloc[-2]['Close']) / df.iloc[-2]['Close']) * 100
+    
     latest = df.iloc[-1]
-    price_change = ((current_price - df.iloc[-2]['Close']) / df.iloc[-2]['Close']) * 100 if len(df) > 1 else 0
     
     with col1:
         st.metric(
@@ -472,17 +508,19 @@ def display_current_metrics(df, current_price, entry_score, risk_score, signal):
         )
     
     with col4:
+        rsi_val = latest.get('RSI', 50)
         st.metric(
             "RSI",
-            f"{latest['RSI']:.1f}",
-            "Neutral" if 40 <= latest['RSI'] <= 60 else "Extreme"
+            f"{rsi_val:.1f}" if pd.notna(rsi_val) else "N/A",
+            "Neutral" if 40 <= rsi_val <= 60 else "Extreme"
         )
     
     with col5:
+        atr_val = latest.get('ATR_pct', 1.0)
         st.metric(
             "Volatility",
-            f"{latest['ATR_pct']:.2f}%",
-            "Low" if latest['ATR_pct'] < 1.0 else "High"
+            f"{atr_val:.2f}%" if pd.notna(atr_val) else "N/A",
+            "Low" if atr_val < 1.0 else "High"
         )
 
 def display_signal_box(signal):
@@ -493,6 +531,28 @@ def display_signal_box(signal):
         st.markdown(f'<div class="signal-exit">🔴 {signal}</div>', unsafe_allow_html=True)
     else:
         st.markdown(f'<div class="signal-neutral">🟡 {signal}</div>', unsafe_allow_html=True)
+
+def display_strike_card(option, label, is_short):
+    """Display individual strike information with Greeks"""
+    greeks = option['greeks']
+    
+    badge_color = "#4caf50" if is_short else "#2196f3"
+    
+    st.markdown(f"""
+    <div style="background: {badge_color}; color: white; padding: 15px; border-radius: 8px; margin: 10px 0;">
+        <div style="font-weight: bold; font-size: 16px; margin-bottom: 10px;">{label}</div>
+        <div style="font-size: 24px; font-weight: bold; margin-bottom: 10px;">
+            ${option['strike']} Strike
+        </div>
+        <div style="font-size: 14px; opacity: 0.9;">
+            <b>Price:</b> ${option['last']:.2f} (Bid: ${option['bid']:.2f} / Ask: ${option['ask']:.2f})<br>
+            <b>Delta:</b> {greeks['delta']:.4f} | <b>Gamma:</b> {greeks['gamma']:.4f}<br>
+            <b>Theta:</b> {greeks['theta']:.4f} | <b>Vega:</b> {greeks['vega']:.4f}<br>
+            <b>Rho:</b> {greeks['rho']:.4f} | <b>IV:</b> {option['iv']*100:.1f}%<br>
+            <b>Volume:</b> {option['volume']:,} | <b>OI:</b> {option['open_interest']:,}
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
 
 def display_iron_condor_setups(options_data, current_price, selected_expiry):
     """Display Iron Condor setups for 16Δ, 20Δ, and 30Δ"""
@@ -512,7 +572,7 @@ def display_iron_condor_setups(options_data, current_price, selected_expiry):
                 st.warning("⚠️ Could not find suitable strikes for this delta")
                 continue
             
-            # Display strikes in a nice table
+            # Display strikes
             col1, col2 = st.columns(2)
             
             with col1:
@@ -538,30 +598,7 @@ def display_iron_condor_setups(options_data, current_price, selected_expiry):
                 ratio = ic_setup['max_profit'] / ic_setup['max_loss'] if ic_setup['max_loss'] > 0 else 0
                 st.metric("Risk/Reward", f"1:{ratio:.2f}")
             
-            # Breakevens
             st.info(f"📍 **Breakeven Points:** Lower: ${ic_setup['breakeven_lower']:.2f} | Upper: ${ic_setup['breakeven_upper']:.2f}")
-
-def display_strike_card(option, label, is_short):
-    """Display individual strike information with Greeks"""
-    greeks = option['greeks']
-    
-    badge_color = "#4caf50" if is_short else "#2196f3"
-    
-    st.markdown(f"""
-    <div style="background: {badge_color}; color: white; padding: 15px; border-radius: 8px; margin: 10px 0;">
-        <div style="font-weight: bold; font-size: 16px; margin-bottom: 10px;">{label}</div>
-        <div style="font-size: 24px; font-weight: bold; margin-bottom: 10px;">
-            ${option['strike']} Strike
-        </div>
-        <div style="font-size: 14px; opacity: 0.9;">
-            <b>Price:</b> ${option['last']:.2f} (Bid: ${option['bid']:.2f} / Ask: ${option['ask']:.2f})<br>
-            <b>Delta:</b> {greeks['delta']:.4f} | <b>Gamma:</b> {greeks['gamma']:.4f}<br>
-            <b>Theta:</b> {greeks['theta']:.4f} | <b>Vega:</b> {greeks['vega']:.4f}<br>
-            <b>Rho:</b> {greeks['rho']:.4f} | <b>IV:</b> {option['iv']*100:.1f}%<br>
-            <b>Volume:</b> {option['volume']:,} | <b>OI:</b> {option['open_interest']:,}
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
 
 def display_full_options_chain(options_data, selected_expiry, current_price):
     """Display full options chain with all Greeks"""
@@ -600,7 +637,7 @@ def display_full_options_chain(options_data, selected_expiry, current_price):
         (df_chain['Strike'] <= current_price + 30)
     ].sort_values('Strike')
     
-    # Highlight at-the-money strikes
+    # Highlight ATM strikes
     def highlight_atm(row):
         if abs(row['Strike'] - current_price) < 5:
             return ['background-color: #fff3cd'] * len(row)
@@ -632,7 +669,7 @@ def main():
     with st.sidebar:
         st.markdown("## ⚙️ Settings")
         
-        # Tradier API key (optional)
+        # Tradier API key
         api_key = st.text_input(
             "Tradier API Key (optional)",
             type="password",
@@ -661,7 +698,6 @@ def main():
         auto_refresh = st.checkbox("Auto-refresh (60s)", value=False)
         
         if auto_refresh:
-            st_autorefresh = st.empty()
             time.sleep(60)
             st.rerun()
         
@@ -720,8 +756,11 @@ def main():
     # Expiration selector
     st.markdown("### 📅 Select Expiration Date")
     
+    # Session state for selected expiry
+    if 'selected_expiry' not in st.session_state:
+        st.session_state.selected_expiry = expirations[0]
+    
     expiry_cols = st.columns(min(5, len(expirations)))
-    selected_expiry = expirations[0]
     
     for idx, exp_date in enumerate(expirations[:15]):
         col_idx = idx % 5
@@ -729,9 +768,12 @@ def main():
         
         with expiry_cols[col_idx]:
             if st.button(f"{exp_date}\n({days_to_exp}d)", key=f"exp_{exp_date}"):
-                selected_expiry = exp_date
+                st.session_state.selected_expiry = exp_date
     
-    st.markdown(f"**Selected Expiration:** <span class='expiry-badge'>{selected_expiry} ({(datetime.strptime(selected_expiry, '%Y-%m-%d') - datetime.now()).days} days)</span>", unsafe_allow_html=True)
+    selected_expiry = st.session_state.selected_expiry
+    days_remaining = (datetime.strptime(selected_expiry, '%Y-%m-%d') - datetime.now()).days
+    
+    st.markdown(f"**Selected Expiration:** <span class='expiry-badge'>{selected_expiry} ({days_remaining} days)</span>", unsafe_allow_html=True)
     
     st.markdown("---")
     
