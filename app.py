@@ -145,6 +145,217 @@ def generate_demo_price_data():
     }, index=dates)
     return df
 
+def get_alpaca_options_chain(symbol="SPY", api_key=None, api_secret=None):
+    """
+    Fetch options chain from Alpaca API
+    Returns dict with expirations and full options data including Greeks
+    """
+    if not api_key or not api_secret:
+        return generate_demo_options_data()
+    
+    try:
+        # Alpaca API endpoints
+        base_url = "https://data.alpaca.markets/v1beta1"
+        headers = {
+            'APCA-API-KEY-ID': api_key,
+            'APCA-API-SECRET-KEY': api_secret
+        }
+        
+        # Get options contracts for SPY
+        response = requests.get(
+            f"{base_url}/options/snapshots/{symbol}",
+            headers=headers,
+            params={'feed': 'indicative'},
+            timeout=15
+        )
+        
+        if response.status_code != 200:
+            st.warning(f"⚠️ Alpaca API error: {response.status_code}. Using demo data.")
+            return generate_demo_options_data()
+        
+        data = response.json()
+        
+        # Parse Alpaca format
+        options_data = {}
+        snapshots = data.get('snapshots', {})
+        
+        # Group by expiration
+        for contract_symbol, snapshot in snapshots.items():
+            # Parse contract symbol (e.g., SPY260221C00600000)
+            # Format: UNDERLYING + YYMMDD + C/P + STRIKE (8 digits)
+            try:
+                underlying = contract_symbol[:3]
+                exp_str = contract_symbol[3:9]  # YYMMDD
+                option_type = contract_symbol[9]  # C or P
+                strike_str = contract_symbol[10:]  # 8 digits
+                
+                # Parse expiration
+                exp_date = datetime.strptime(f"20{exp_str}", "%Y%m%d").strftime('%Y-%m-%d')
+                
+                # Parse strike (divide by 1000)
+                strike = float(strike_str) / 1000
+                
+                # Get Greeks
+                greeks = snapshot.get('greeks', {})
+                latest_quote = snapshot.get('latestQuote', {})
+                
+                option = {
+                    'symbol': contract_symbol,
+                    'strike': strike,
+                    'type': 'call' if option_type == 'C' else 'put',
+                    'expiration_date': exp_date,
+                    'bid': latest_quote.get('bp', 0),
+                    'ask': latest_quote.get('ap', 0),
+                    'last': latest_quote.get('ap', 0),  # Use ask as last
+                    'volume': snapshot.get('latestTrade', {}).get('s', 0),
+                    'open_interest': snapshot.get('impliedVolatility', 0) * 1000,  # Approximate
+                    'greeks': {
+                        'delta': greeks.get('delta', 0),
+                        'gamma': greeks.get('gamma', 0),
+                        'theta': greeks.get('theta', 0),
+                        'vega': greeks.get('vega', 0),
+                        'rho': greeks.get('rho', 0)
+                    },
+                    'iv': snapshot.get('impliedVolatility', 0)
+                }
+                
+                # Group by expiration
+                if exp_date not in options_data:
+                    options_data[exp_date] = []
+                options_data[exp_date].append(option)
+                
+            except Exception as e:
+                continue
+        
+        # Sort expirations and limit to 15
+        sorted_expirations = sorted(options_data.keys())[:15]
+        filtered_data = {exp: options_data[exp] for exp in sorted_expirations}
+        
+        return filtered_data if filtered_data else generate_demo_options_data()
+        
+    except Exception as e:
+        st.warning(f"⚠️ Alpaca API error: {e}. Using demo data.")
+        return generate_demo_options_data()
+
+def get_tdameritrade_options_chain(symbol="SPY", api_key=None):
+    """
+    Fetch options chain from TD Ameritrade API
+    Returns dict with expirations and full options data including Greeks
+    """
+    if not api_key:
+        return generate_demo_options_data()
+    
+    try:
+        base_url = "https://api.tdameritrade.com/v1/marketdata"
+        
+        # Get option chain
+        params = {
+            'apikey': api_key,
+            'symbol': symbol,
+            'includeQuotes': 'TRUE',
+            'strategy': 'ANALYTICAL',
+            'range': 'ALL'
+        }
+        
+        response = requests.get(
+            f"{base_url}/chains",
+            params=params,
+            timeout=15
+        )
+        
+        if response.status_code != 200:
+            st.warning(f"TD Ameritrade API error: {response.status_code}. Using demo data.")
+            return generate_demo_options_data()
+        
+        data = response.json()
+        
+        # Parse TD Ameritrade format to our format
+        options_data = {}
+        
+        # Process call options
+        call_exp_map = data.get('callExpDateMap', {})
+        put_exp_map = data.get('putExpDateMap', {})
+        
+        # Get all unique expiration dates
+        all_expirations = set()
+        for exp_date_str in call_exp_map.keys():
+            exp_date = exp_date_str.split(':')[0]  # Format: "2024-02-16:45"
+            all_expirations.add(exp_date)
+        
+        all_expirations = sorted(list(all_expirations))[:15]  # Limit to 15
+        
+        for exp_date in all_expirations:
+            options = []
+            
+            # Find matching strikes for this expiration
+            for exp_key in call_exp_map.keys():
+                if exp_date in exp_key:
+                    strike_map = call_exp_map[exp_key]
+                    
+                    for strike_str, option_list in strike_map.items():
+                        strike = float(strike_str)
+                        
+                        for opt in option_list:
+                            # Call option
+                            options.append({
+                                'symbol': opt.get('symbol', ''),
+                                'strike': strike,
+                                'type': 'call',
+                                'expiration_date': exp_date,
+                                'bid': opt.get('bid', 0),
+                                'ask': opt.get('ask', 0),
+                                'last': opt.get('last', 0),
+                                'volume': opt.get('totalVolume', 0),
+                                'open_interest': opt.get('openInterest', 0),
+                                'greeks': {
+                                    'delta': opt.get('delta', 0),
+                                    'gamma': opt.get('gamma', 0),
+                                    'theta': opt.get('theta', 0),
+                                    'vega': opt.get('vega', 0),
+                                    'rho': opt.get('rho', 0)
+                                },
+                                'iv': opt.get('volatility', 0) / 100 if opt.get('volatility') else 0
+                            })
+            
+            # Add put options
+            for exp_key in put_exp_map.keys():
+                if exp_date in exp_key:
+                    strike_map = put_exp_map[exp_key]
+                    
+                    for strike_str, option_list in strike_map.items():
+                        strike = float(strike_str)
+                        
+                        for opt in option_list:
+                            # Put option
+                            options.append({
+                                'symbol': opt.get('symbol', ''),
+                                'strike': strike,
+                                'type': 'put',
+                                'expiration_date': exp_date,
+                                'bid': opt.get('bid', 0),
+                                'ask': opt.get('ask', 0),
+                                'last': opt.get('last', 0),
+                                'volume': opt.get('totalVolume', 0),
+                                'open_interest': opt.get('openInterest', 0),
+                                'greeks': {
+                                    'delta': opt.get('delta', 0),
+                                    'gamma': opt.get('gamma', 0),
+                                    'theta': opt.get('theta', 0),
+                                    'vega': opt.get('vega', 0),
+                                    'rho': opt.get('rho', 0)
+                                },
+                                'iv': opt.get('volatility', 0) / 100 if opt.get('volatility') else 0
+                            })
+            
+            if options:
+                options_data[exp_date] = options
+        
+        return options_data if options_data else generate_demo_options_data()
+        
+    except Exception as e:
+        st.warning(f"⚠️ TD Ameritrade API error: {e}. Using demo data.")
+        return generate_demo_options_data()
+
 def get_tradier_options_chain(symbol="SPY", api_key=None):
     """
     Fetch options chain from Tradier API (sandbox or production)
@@ -600,6 +811,210 @@ def display_iron_condor_setups(options_data, current_price, selected_expiry):
             
             st.info(f"📍 **Breakeven Points:** Lower: ${ic_setup['breakeven_lower']:.2f} | Upper: ${ic_setup['breakeven_upper']:.2f}")
 
+def display_charts(df, current_price):
+    """Display interactive charts with indicators"""
+    st.markdown("### 📈 Technical Analysis Charts")
+    
+    if df.empty or len(df) < 20:
+        st.warning("Not enough data to display charts")
+        return
+    
+    # Chart 1: Price with Bollinger Bands
+    fig1 = go.Figure()
+    
+    # Price line
+    fig1.add_trace(go.Scatter(
+        x=df.index,
+        y=df['Close'],
+        name='SPY Price',
+        line=dict(color='#1f77b4', width=2)
+    ))
+    
+    # Bollinger Bands
+    if 'BB_upper' in df.columns:
+        fig1.add_trace(go.Scatter(
+            x=df.index,
+            y=df['BB_upper'],
+            name='Upper BB',
+            line=dict(color='rgba(255,0,0,0.3)', width=1, dash='dash'),
+            fill=None
+        ))
+        
+        fig1.add_trace(go.Scatter(
+            x=df.index,
+            y=df['BB_lower'],
+            name='Lower BB',
+            line=dict(color='rgba(0,255,0,0.3)', width=1, dash='dash'),
+            fill='tonexty',
+            fillcolor='rgba(100,100,100,0.1)'
+        ))
+        
+        fig1.add_trace(go.Scatter(
+            x=df.index,
+            y=df['SMA20'],
+            name='SMA 20',
+            line=dict(color='orange', width=1, dash='dot')
+        ))
+    
+    fig1.update_layout(
+        title='SPY Price with Bollinger Bands',
+        yaxis_title='Price ($)',
+        xaxis_title='Time',
+        height=400,
+        hovermode='x unified',
+        template='plotly_white'
+    )
+    
+    st.plotly_chart(fig1, use_container_width=True)
+    
+    # Chart 2 & 3: RSI and MACD side by side
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        # RSI Chart
+        if 'RSI' in df.columns:
+            fig2 = go.Figure()
+            
+            fig2.add_trace(go.Scatter(
+                x=df.index,
+                y=df['RSI'],
+                name='RSI',
+                line=dict(color='purple', width=2)
+            ))
+            
+            # Overbought/Oversold lines
+            fig2.add_hline(y=70, line_dash="dash", line_color="red", opacity=0.5)
+            fig2.add_hline(y=30, line_dash="dash", line_color="green", opacity=0.5)
+            fig2.add_hline(y=50, line_dash="dot", line_color="gray", opacity=0.3)
+            
+            # Shade neutral zone
+            fig2.add_hrect(y0=40, y1=60, fillcolor="green", opacity=0.1, line_width=0)
+            
+            fig2.update_layout(
+                title='RSI (14)',
+                yaxis_title='RSI',
+                xaxis_title='Time',
+                height=300,
+                yaxis=dict(range=[0, 100]),
+                template='plotly_white'
+            )
+            
+            st.plotly_chart(fig2, use_container_width=True)
+    
+    with col2:
+        # MACD Chart
+        if 'MACD' in df.columns:
+            fig3 = go.Figure()
+            
+            fig3.add_trace(go.Scatter(
+                x=df.index,
+                y=df['MACD'],
+                name='MACD',
+                line=dict(color='blue', width=2)
+            ))
+            
+            fig3.add_trace(go.Scatter(
+                x=df.index,
+                y=df['MACD_signal'],
+                name='Signal',
+                line=dict(color='red', width=1)
+            ))
+            
+            # MACD histogram
+            macd_hist = df['MACD'] - df['MACD_signal']
+            colors = ['green' if x > 0 else 'red' for x in macd_hist]
+            
+            fig3.add_trace(go.Bar(
+                x=df.index,
+                y=macd_hist,
+                name='Histogram',
+                marker_color=colors,
+                opacity=0.3
+            ))
+            
+            fig3.add_hline(y=0, line_dash="dash", line_color="gray", opacity=0.5)
+            
+            fig3.update_layout(
+                title='MACD',
+                yaxis_title='MACD',
+                xaxis_title='Time',
+                height=300,
+                template='plotly_white'
+            )
+            
+            st.plotly_chart(fig3, use_container_width=True)
+    
+    # Chart 4: ATR and Volume
+    col3, col4 = st.columns(2)
+    
+    with col3:
+        # ATR Chart
+        if 'ATR_pct' in df.columns:
+            fig4 = go.Figure()
+            
+            fig4.add_trace(go.Scatter(
+                x=df.index,
+                y=df['ATR_pct'],
+                name='ATR %',
+                line=dict(color='darkred', width=2),
+                fill='tozeroy',
+                fillcolor='rgba(139,0,0,0.1)'
+            ))
+            
+            # Volatility zones
+            fig4.add_hrect(y0=0, y1=0.8, fillcolor="green", opacity=0.05, line_width=0)
+            fig4.add_hrect(y0=2.0, y1=10, fillcolor="red", opacity=0.05, line_width=0)
+            
+            fig4.add_hline(y=0.8, line_dash="dash", line_color="green", opacity=0.5)
+            fig4.add_hline(y=2.0, line_dash="dash", line_color="red", opacity=0.5)
+            
+            fig4.update_layout(
+                title='ATR % (Volatility)',
+                yaxis_title='ATR %',
+                xaxis_title='Time',
+                height=300,
+                template='plotly_white'
+            )
+            
+            st.plotly_chart(fig4, use_container_width=True)
+    
+    with col4:
+        # Volume Chart
+        if 'Volume' in df.columns:
+            fig5 = go.Figure()
+            
+            # Color volume bars based on price change
+            colors = ['green' if df['Close'].iloc[i] >= df['Close'].iloc[i-1] else 'red' 
+                     for i in range(1, len(df))]
+            colors = ['gray'] + colors  # First bar
+            
+            fig5.add_trace(go.Bar(
+                x=df.index,
+                y=df['Volume'],
+                name='Volume',
+                marker_color=colors,
+                opacity=0.7
+            ))
+            
+            # Volume moving average
+            vol_ma = df['Volume'].rolling(20, min_periods=1).mean()
+            fig5.add_trace(go.Scatter(
+                x=df.index,
+                y=vol_ma,
+                name='Vol MA(20)',
+                line=dict(color='blue', width=2)
+            ))
+            
+            fig5.update_layout(
+                title='Volume',
+                yaxis_title='Volume',
+                xaxis_title='Time',
+                height=300,
+                template='plotly_white'
+            )
+            
+            st.plotly_chart(fig5, use_container_width=True)
+
 def display_full_options_chain(options_data, selected_expiry, current_price):
     """Display full options chain with all Greeks"""
     st.markdown("### 📋 Full Options Chain")
@@ -669,15 +1084,74 @@ def main():
     with st.sidebar:
         st.markdown("## ⚙️ Settings")
         
-        # Tradier API key
-        api_key = st.text_input(
-            "Tradier API Key (optional)",
-            type="password",
-            help="Get free sandbox API key at developer.tradier.com"
+        # API Source selection
+        api_source = st.radio(
+            "Data Source",
+            ["Demo Mode", "Alpaca (Recommended)", "TD Ameritrade", "Tradier"],
+            index=0
         )
         
-        if not api_key:
-            st.info("💡 Using demo data. Add Tradier API key for real-time options data.")
+        api_key = None
+        api_secret = None
+        
+        if api_source == "Alpaca (Recommended)":
+            st.markdown("### 🦙 Alpaca Setup")
+            
+            api_key = st.text_input(
+                "API Key",
+                type="password",
+                help="From alpaca.markets dashboard"
+            )
+            
+            api_secret = st.text_input(
+                "API Secret",
+                type="password",
+                help="From alpaca.markets dashboard"
+            )
+            
+            if not api_key or not api_secret:
+                st.warning("📋 **Setup Steps:**")
+                st.markdown("""
+                1. Go to [alpaca.markets](https://alpaca.markets)
+                2. Sign up (free paper trading)
+                3. Generate API keys
+                4. Paste both keys above
+                """)
+            else:
+                st.success("✅ Alpaca connected!")
+                st.info("💡 **Pro Tip:** Use Paper Trading keys for risk-free testing")
+        
+        elif api_source == "TD Ameritrade":
+            st.markdown("### 🔗 TD Ameritrade Setup")
+            api_key = st.text_input(
+                "Consumer Key",
+                type="password",
+                help="Get from developer.tdameritrade.com"
+            )
+            
+            if not api_key:
+                st.warning("📋 **Setup Steps:**")
+                st.markdown("""
+                1. Go to [developer.tdameritrade.com](https://developer.tdameritrade.com)
+                2. Register & create app
+                3. Copy Consumer Key
+                4. Paste above
+                """)
+            else:
+                st.success("✅ TD Ameritrade connected!")
+        
+        elif api_source == "Tradier":
+            api_key = st.text_input(
+                "Tradier API Key",
+                type="password",
+                help="Get free sandbox key at developer.tradier.com"
+            )
+            
+            if not api_key:
+                st.info("💡 Get free API key at [developer.tradier.com](https://developer.tradier.com)")
+        
+        else:
+            st.info("💡 Using demo data with realistic options pricing and Greeks.")
         
         # Timeframe selection
         timeframe_map = {
@@ -731,8 +1205,15 @@ def main():
         df = calculate_indicators(df)
         current_price = df['Close'].iloc[-1]
         
-        # Fetch options data
-        options_data = get_tradier_options_chain("SPY", api_key)
+        # Fetch options data based on selected source
+        if api_source == "Alpaca (Recommended)":
+            options_data = get_alpaca_options_chain("SPY", api_key, api_secret)
+        elif api_source == "TD Ameritrade":
+            options_data = get_tdameritrade_options_chain("SPY", api_key)
+        elif api_source == "Tradier":
+            options_data = get_tradier_options_chain("SPY", api_key)
+        else:
+            options_data = generate_demo_options_data()
         
         if not options_data:
             st.error("❌ No options data available")
@@ -774,6 +1255,11 @@ def main():
     days_remaining = (datetime.strptime(selected_expiry, '%Y-%m-%d') - datetime.now()).days
     
     st.markdown(f"**Selected Expiration:** <span class='expiry-badge'>{selected_expiry} ({days_remaining} days)</span>", unsafe_allow_html=True)
+    
+    st.markdown("---")
+    
+    # Charts section
+    display_charts(df, current_price)
     
     st.markdown("---")
     
