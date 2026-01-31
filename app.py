@@ -12,6 +12,24 @@ from datetime import datetime, timedelta
 import requests
 from typing import Dict, List, Tuple
 import time
+import json
+import sys
+import os
+
+# Add current directory to path for imports
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+try:
+    from paper_trading import PaperTradingPortfolio
+    from paper_trading_ui import (
+        initialize_paper_trading,
+        display_paper_trading_dashboard,
+        display_open_position_form
+    )
+    PAPER_TRADING_AVAILABLE = True
+except ImportError:
+    PAPER_TRADING_AVAILABLE = False
+    st.warning("⚠️ Paper trading module not found. Some features may be unavailable.")
 
 # Page configuration
 st.set_page_config(
@@ -144,6 +162,204 @@ def generate_demo_price_data():
         'Volume': np.random.randint(1000000, 5000000, 100)
     }, index=dates)
     return df
+
+def get_yahoo_options_chain(symbol="SPY"):
+    """
+    Fetch REAL options chain from Yahoo Finance
+    Returns dict with expirations and full options data including Greeks
+    FREE and NO API KEY NEEDED!
+    """
+    try:
+        ticker = yf.Ticker(symbol)
+        
+        # Get all available expiration dates
+        expirations = ticker.options
+        
+        if not expirations:
+            st.warning("⚠️ Could not fetch options from Yahoo Finance. Using demo data.")
+            return generate_demo_options_data()
+        
+        # Get current stock price for Greek calculations
+        current_price = ticker.history(period='1d')['Close'].iloc[-1]
+        
+        options_data = {}
+        
+        # Limit to first 15 expirations
+        for exp_date in expirations[:15]:
+            try:
+                # Get option chain for this expiration
+                opt_chain = ticker.option_chain(exp_date)
+                calls = opt_chain.calls
+                puts = opt_chain.puts
+                
+                options = []
+                
+                # Calculate days to expiration
+                exp_datetime = datetime.strptime(exp_date, '%Y-%m-%d')
+                days_to_exp = (exp_datetime - datetime.now()).days
+                
+                # Process calls
+                for _, row in calls.iterrows():
+                    strike = row['strike']
+                    
+                    # Calculate Greeks (simplified Black-Scholes approximation)
+                    # For calls
+                    moneyness = (strike - current_price) / current_price
+                    iv = row.get('impliedVolatility', 0.20)  # Default to 20% if missing
+                    
+                    delta = calculate_delta(current_price, strike, days_to_exp, iv, 'call')
+                    gamma = calculate_gamma(current_price, strike, days_to_exp, iv)
+                    theta = calculate_theta(current_price, strike, days_to_exp, iv, 'call')
+                    vega = calculate_vega(current_price, strike, days_to_exp, iv)
+                    rho = calculate_rho(current_price, strike, days_to_exp, iv, 'call')
+                    
+                    options.append({
+                        'symbol': row.get('contractSymbol', ''),
+                        'strike': strike,
+                        'type': 'call',
+                        'expiration_date': exp_date,
+                        'bid': row.get('bid', 0),
+                        'ask': row.get('ask', 0),
+                        'last': row.get('lastPrice', 0),
+                        'volume': int(row.get('volume', 0)) if pd.notna(row.get('volume')) else 0,
+                        'open_interest': int(row.get('openInterest', 0)) if pd.notna(row.get('openInterest')) else 0,
+                        'greeks': {
+                            'delta': round(delta, 4),
+                            'gamma': round(gamma, 4),
+                            'theta': round(theta, 4),
+                            'vega': round(vega, 4),
+                            'rho': round(rho, 4)
+                        },
+                        'iv': round(iv, 4)
+                    })
+                
+                # Process puts
+                for _, row in puts.iterrows():
+                    strike = row['strike']
+                    
+                    moneyness = (strike - current_price) / current_price
+                    iv = row.get('impliedVolatility', 0.20)
+                    
+                    delta = calculate_delta(current_price, strike, days_to_exp, iv, 'put')
+                    gamma = calculate_gamma(current_price, strike, days_to_exp, iv)
+                    theta = calculate_theta(current_price, strike, days_to_exp, iv, 'put')
+                    vega = calculate_vega(current_price, strike, days_to_exp, iv)
+                    rho = calculate_rho(current_price, strike, days_to_exp, iv, 'put')
+                    
+                    options.append({
+                        'symbol': row.get('contractSymbol', ''),
+                        'strike': strike,
+                        'type': 'put',
+                        'expiration_date': exp_date,
+                        'bid': row.get('bid', 0),
+                        'ask': row.get('ask', 0),
+                        'last': row.get('lastPrice', 0),
+                        'volume': int(row.get('volume', 0)) if pd.notna(row.get('volume')) else 0,
+                        'open_interest': int(row.get('openInterest', 0)) if pd.notna(row.get('openInterest')) else 0,
+                        'greeks': {
+                            'delta': round(delta, 4),
+                            'gamma': round(gamma, 4),
+                            'theta': round(theta, 4),
+                            'vega': round(vega, 4),
+                            'rho': round(rho, 4)
+                        },
+                        'iv': round(iv, 4)
+                    })
+                
+                options_data[exp_date] = options
+                
+            except Exception as e:
+                continue
+        
+        if options_data:
+            return options_data
+        else:
+            st.warning("⚠️ No options data available. Using demo data.")
+            return generate_demo_options_data()
+            
+    except Exception as e:
+        st.warning(f"⚠️ Yahoo Finance error: {str(e)[:100]}. Using demo data.")
+        return generate_demo_options_data()
+
+# Greek calculation helper functions (Black-Scholes approximation)
+from math import sqrt, exp, log, pi
+from scipy.stats import norm
+
+def calculate_delta(S, K, T, sigma, option_type='call'):
+    """Calculate option delta"""
+    if T <= 0:
+        return 1.0 if option_type == 'call' and S > K else 0.0
+    
+    try:
+        r = 0.05  # Risk-free rate assumption
+        d1 = (log(S / K) + (r + 0.5 * sigma ** 2) * (T / 365)) / (sigma * sqrt(T / 365))
+        
+        if option_type == 'call':
+            return norm.cdf(d1)
+        else:
+            return -norm.cdf(-d1)
+    except:
+        return 0.5 if option_type == 'call' else -0.5
+
+def calculate_gamma(S, K, T, sigma):
+    """Calculate option gamma"""
+    if T <= 0:
+        return 0.0
+    
+    try:
+        r = 0.05
+        d1 = (log(S / K) + (r + 0.5 * sigma ** 2) * (T / 365)) / (sigma * sqrt(T / 365))
+        return norm.pdf(d1) / (S * sigma * sqrt(T / 365))
+    except:
+        return 0.01
+
+def calculate_theta(S, K, T, sigma, option_type='call'):
+    """Calculate option theta (per day)"""
+    if T <= 0:
+        return 0.0
+    
+    try:
+        r = 0.05
+        d1 = (log(S / K) + (r + 0.5 * sigma ** 2) * (T / 365)) / (sigma * sqrt(T / 365))
+        d2 = d1 - sigma * sqrt(T / 365)
+        
+        if option_type == 'call':
+            theta = (-S * norm.pdf(d1) * sigma / (2 * sqrt(T / 365)) - r * K * exp(-r * T / 365) * norm.cdf(d2)) / 365
+        else:
+            theta = (-S * norm.pdf(d1) * sigma / (2 * sqrt(T / 365)) + r * K * exp(-r * T / 365) * norm.cdf(-d2)) / 365
+        
+        return theta
+    except:
+        return -0.05
+
+def calculate_vega(S, K, T, sigma):
+    """Calculate option vega"""
+    if T <= 0:
+        return 0.0
+    
+    try:
+        r = 0.05
+        d1 = (log(S / K) + (r + 0.5 * sigma ** 2) * (T / 365)) / (sigma * sqrt(T / 365))
+        return S * norm.pdf(d1) * sqrt(T / 365) / 100
+    except:
+        return 0.15
+
+def calculate_rho(S, K, T, sigma, option_type='call'):
+    """Calculate option rho"""
+    if T <= 0:
+        return 0.0
+    
+    try:
+        r = 0.05
+        d1 = (log(S / K) + (r + 0.5 * sigma ** 2) * (T / 365)) / (sigma * sqrt(T / 365))
+        d2 = d1 - sigma * sqrt(T / 365)
+        
+        if option_type == 'call':
+            return K * (T / 365) * exp(-r * T / 365) * norm.cdf(d2) / 100
+        else:
+            return -K * (T / 365) * exp(-r * T / 365) * norm.cdf(-d2) / 100
+    except:
+        return 0.01
 
 def get_alpaca_options_chain(symbol="SPY", api_key=None, api_secret=None):
     """
@@ -525,6 +741,331 @@ def generate_demo_options_data():
     
     return options_data
 
+# ==================== PAPER TRADING SYSTEM ====================
+
+def init_paper_trading():
+    """Initialize paper trading portfolio in session state"""
+    if 'paper_portfolio' not in st.session_state:
+        st.session_state.paper_portfolio = {
+            'cash': 10000.00,  # Starting cash
+            'positions': [],    # Open positions
+            'closed_trades': [], # Closed trades history
+            'total_pl': 0.00,   # Total profit/loss
+            'trade_count': 0    # Number of trades
+        }
+
+def calculate_position_value(position, current_data):
+    """Calculate current value and P&L of a position"""
+    try:
+        # Get current prices for all legs
+        total_current_value = 0
+        
+        for leg in ['short_call', 'long_call', 'short_put', 'long_put']:
+            strike = position[leg]['strike']
+            option_type = 'call' if 'call' in leg else 'put'
+            
+            # Find current option in data
+            current_option = None
+            exp_date = position['expiration']
+            
+            if exp_date in current_data:
+                for opt in current_data[exp_date]:
+                    if opt['strike'] == strike and opt['type'] == option_type:
+                        current_option = opt
+                        break
+            
+            if current_option:
+                current_price = (current_option['bid'] + current_option['ask']) / 2
+            else:
+                current_price = 0
+            
+            # Calculate value (short = negative, long = positive)
+            if 'short' in leg:
+                total_current_value -= current_price * 100 * position['quantity']
+            else:
+                total_current_value += current_price * 100 * position['quantity']
+        
+        pl = position['entry_credit'] + total_current_value
+        
+        return total_current_value, pl
+        
+    except Exception as e:
+        return 0, 0
+
+def open_paper_trade(ic_setup, expiration, quantity=1):
+    """Open a new paper trading position"""
+    if 'paper_portfolio' not in st.session_state:
+        init_paper_trading()
+    
+    # Calculate entry credit
+    entry_credit = ic_setup['max_profit'] * quantity
+    max_loss = ic_setup['max_loss'] * quantity
+    
+    # Check if enough cash
+    required_margin = max_loss
+    if st.session_state.paper_portfolio['cash'] < required_margin:
+        st.error(f"❌ Insufficient cash! Need ${required_margin:.2f}, have ${st.session_state.paper_portfolio['cash']:.2f}")
+        return False
+    
+    # Create position
+    position = {
+        'id': st.session_state.paper_portfolio['trade_count'] + 1,
+        'entry_date': datetime.now(),
+        'expiration': expiration,
+        'quantity': quantity,
+        'short_call': {
+            'strike': ic_setup['short_call']['strike'],
+            'entry_price': ic_setup['short_call']['last']
+        },
+        'long_call': {
+            'strike': ic_setup['long_call']['strike'],
+            'entry_price': ic_setup['long_call']['last']
+        },
+        'short_put': {
+            'strike': ic_setup['short_put']['strike'],
+            'entry_price': ic_setup['short_put']['last']
+        },
+        'long_put': {
+            'strike': ic_setup['long_put']['strike'],
+            'entry_price': ic_setup['long_put']['last']
+        },
+        'entry_credit': entry_credit,
+        'max_loss': max_loss,
+        'max_profit': entry_credit,
+        'target_delta': ic_setup.get('target_delta', 0.20)
+    }
+    
+    # Add to portfolio
+    st.session_state.paper_portfolio['positions'].append(position)
+    st.session_state.paper_portfolio['cash'] -= required_margin
+    st.session_state.paper_portfolio['trade_count'] += 1
+    
+    st.success(f"✅ Paper trade opened! Trade #{position['id']} | Credit: ${entry_credit:.2f} | Max Loss: ${max_loss:.2f}")
+    return True
+
+def close_paper_trade(position_id, current_data, reason="Manual close"):
+    """Close a paper trading position"""
+    if 'paper_portfolio' not in st.session_state:
+        return False
+    
+    # Find position
+    position = None
+    for i, pos in enumerate(st.session_state.paper_portfolio['positions']):
+        if pos['id'] == position_id:
+            position = pos
+            position_index = i
+            break
+    
+    if not position:
+        return False
+    
+    # Calculate final P&L
+    _, final_pl = calculate_position_value(position, current_data)
+    
+    # Close position
+    closed_trade = position.copy()
+    closed_trade['close_date'] = datetime.now()
+    closed_trade['close_reason'] = reason
+    closed_trade['final_pl'] = final_pl
+    closed_trade['days_held'] = (datetime.now() - position['entry_date']).days
+    
+    # Update portfolio
+    st.session_state.paper_portfolio['closed_trades'].append(closed_trade)
+    st.session_state.paper_portfolio['positions'].pop(position_index)
+    st.session_state.paper_portfolio['cash'] += position['max_loss'] + final_pl
+    st.session_state.paper_portfolio['total_pl'] += final_pl
+    
+    return True
+
+def display_paper_trading_panel(options_data, current_price, ic_setups, selected_expiry):
+    """Display paper trading interface"""
+    init_paper_trading()
+    
+    st.markdown("### 💼 Paper Trading Portfolio")
+    
+    portfolio = st.session_state.paper_portfolio
+    
+    # Portfolio summary
+    col1, col2, col3, col4, col5 = st.columns(5)
+    
+    # Calculate total position value
+    total_position_value = 0
+    total_unrealized_pl = 0
+    
+    for pos in portfolio['positions']:
+        _, pl = calculate_position_value(pos, options_data)
+        total_unrealized_pl += pl
+    
+    with col1:
+        st.metric("Cash", f"${portfolio['cash']:.2f}")
+    
+    with col2:
+        total_value = portfolio['cash'] + sum(p['max_loss'] for p in portfolio['positions']) + total_unrealized_pl
+        st.metric("Total Value", f"${total_value:.2f}", f"{((total_value - 10000) / 10000 * 100):.2f}%")
+    
+    with col3:
+        st.metric("Open Positions", len(portfolio['positions']))
+    
+    with col4:
+        st.metric("Unrealized P&L", f"${total_unrealized_pl:.2f}", 
+                 "Profit" if total_unrealized_pl > 0 else "Loss")
+    
+    with col5:
+        st.metric("Total P&L", f"${portfolio['total_pl']:.2f}",
+                 "Profit" if portfolio['total_pl'] > 0 else "Loss")
+    
+    st.markdown("---")
+    
+    # Tabs for different views
+    tab1, tab2, tab3 = st.tabs(["📈 Open New Trade", "📊 Open Positions", "📜 Trade History"])
+    
+    with tab1:
+        st.markdown("#### Open New Iron Condor")
+        
+        if not ic_setups or len(ic_setups) == 0:
+            st.warning("⚠️ No Iron Condor setups available. Check signals first.")
+        else:
+            # Setup selection
+            setup_options = ["16Δ Conservative", "20Δ Balanced (Optimal)", "30Δ Aggressive"]
+            selected_setup = st.selectbox("Select Setup", setup_options, index=1)
+            
+            setup_idx = setup_options.index(selected_setup)
+            ic_setup = ic_setups[setup_idx] if setup_idx < len(ic_setups) else None
+            
+            if ic_setup:
+                # Quantity selector
+                quantity = st.number_input("Quantity (contracts)", min_value=1, max_value=10, value=1)
+                
+                # Show setup details
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    st.markdown("**Call Spread**")
+                    st.write(f"Short: ${ic_setup['short_call']['strike']} @ ${ic_setup['short_call']['last']:.2f}")
+                    st.write(f"Long: ${ic_setup['long_call']['strike']} @ ${ic_setup['long_call']['last']:.2f}")
+                
+                with col2:
+                    st.markdown("**Put Spread**")
+                    st.write(f"Short: ${ic_setup['short_put']['strike']} @ ${ic_setup['short_put']['last']:.2f}")
+                    st.write(f"Long: ${ic_setup['long_put']['strike']} @ ${ic_setup['long_put']['last']:.2f}")
+                
+                st.markdown("---")
+                
+                # P&L summary
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    st.metric("Credit Received", f"${ic_setup['max_profit'] * quantity:.2f}")
+                with col2:
+                    st.metric("Max Loss", f"${ic_setup['max_loss'] * quantity:.2f}")
+                with col3:
+                    st.metric("Probability", f"{ic_setup['pop']}%")
+                
+                # Open trade button
+                if st.button("🚀 Open Paper Trade", type="primary", use_container_width=True):
+                    ic_setup['target_delta'] = [0.16, 0.20, 0.30][setup_idx]
+                    open_paper_trade(ic_setup, selected_expiry, quantity)
+                    st.rerun()
+    
+    with tab2:
+        st.markdown("#### Open Positions")
+        
+        if len(portfolio['positions']) == 0:
+            st.info("📭 No open positions. Open a trade in the 'Open New Trade' tab!")
+        else:
+            for pos in portfolio['positions']:
+                with st.expander(f"Trade #{pos['id']} - {pos['expiration']} ({pos['quantity']} contracts)", expanded=True):
+                    # Calculate current P&L
+                    current_value, current_pl = calculate_position_value(pos, options_data)
+                    
+                    days_held = (datetime.now() - pos['entry_date']).days
+                    days_to_exp = (datetime.strptime(pos['expiration'], '%Y-%m-%d') - datetime.now()).days
+                    
+                    # Metrics
+                    col1, col2, col3, col4 = st.columns(4)
+                    
+                    with col1:
+                        st.metric("Entry Credit", f"${pos['entry_credit']:.2f}")
+                    with col2:
+                        pl_pct = (current_pl / pos['entry_credit'] * 100) if pos['entry_credit'] > 0 else 0
+                        st.metric("Current P&L", f"${current_pl:.2f}", f"{pl_pct:.1f}%")
+                    with col3:
+                        st.metric("Days Held", f"{days_held}")
+                    with col4:
+                        st.metric("DTE", f"{days_to_exp}")
+                    
+                    # Strikes
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        st.markdown("**Call Spread**")
+                        st.write(f"Short: ${pos['short_call']['strike']}")
+                        st.write(f"Long: ${pos['long_call']['strike']}")
+                    with col2:
+                        st.markdown("**Put Spread**")
+                        st.write(f"Short: ${pos['short_put']['strike']}")
+                        st.write(f"Long: ${pos['long_put']['strike']}")
+                    
+                    # Exit rules
+                    st.markdown("**Exit Signals:**")
+                    
+                    exit_reasons = []
+                    if pl_pct >= 50:
+                        exit_reasons.append("✅ 50% profit target reached!")
+                    if days_to_exp <= 21:
+                        exit_reasons.append("⏰ 21 DTE - consider closing")
+                    if pl_pct <= -100:
+                        exit_reasons.append("🚨 Stop loss triggered!")
+                    
+                    if exit_reasons:
+                        for reason in exit_reasons:
+                            st.warning(reason)
+                    else:
+                        st.info("✓ No exit signals yet")
+                    
+                    # Close button
+                    if st.button(f"Close Trade #{pos['id']}", key=f"close_{pos['id']}"):
+                        if close_paper_trade(pos['id'], options_data, "Manual close"):
+                            st.success(f"✅ Trade #{pos['id']} closed! P&L: ${current_pl:.2f}")
+                            st.rerun()
+    
+    with tab3:
+        st.markdown("#### Trade History")
+        
+        if len(portfolio['closed_trades']) == 0:
+            st.info("📭 No closed trades yet. Start trading to build history!")
+        else:
+            # Summary stats
+            total_trades = len(portfolio['closed_trades'])
+            winning_trades = len([t for t in portfolio['closed_trades'] if t['final_pl'] > 0])
+            win_rate = (winning_trades / total_trades * 100) if total_trades > 0 else 0
+            
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric("Total Trades", total_trades)
+            with col2:
+                st.metric("Win Rate", f"{win_rate:.1f}%")
+            with col3:
+                st.metric("Total P&L", f"${portfolio['total_pl']:.2f}")
+            
+            st.markdown("---")
+            
+            # Trade history table
+            history_data = []
+            for trade in reversed(portfolio['closed_trades']):
+                history_data.append({
+                    'Trade #': trade['id'],
+                    'Entry': trade['entry_date'].strftime('%Y-%m-%d'),
+                    'Exit': trade['close_date'].strftime('%Y-%m-%d'),
+                    'Days': trade['days_held'],
+                    'Credit': f"${trade['entry_credit']:.2f}",
+                    'P&L': f"${trade['final_pl']:.2f}",
+                    'Return': f"{(trade['final_pl'] / trade['entry_credit'] * 100):.1f}%",
+                    'Reason': trade['close_reason']
+                })
+            
+            if history_data:
+                df_history = pd.DataFrame(history_data)
+                st.dataframe(df_history, use_container_width=True, hide_index=True)
+
 # ==================== ANALYSIS FUNCTIONS ====================
 
 def calculate_indicators(df):
@@ -838,6 +1379,27 @@ def display_iron_condor_setups(options_data, current_price, selected_expiry):
                 st.metric("Risk/Reward", f"1:{ratio:.2f}")
             
             st.info(f"📍 **Breakeven Points:** Lower: ${ic_setup['breakeven_lower']:.2f} | Upper: ${ic_setup['breakeven_upper']:.2f}")
+            
+            # Paper Trading Button
+            if PAPER_TRADING_AVAILABLE and st.session_state.get('paper_trading_enabled', False):
+                st.markdown("---")
+                
+                # Calculate values for the form
+                call_credit = (ic_setup['short_call']['bid'] - ic_setup['long_call']['ask'])
+                put_credit = (ic_setup['short_put']['bid'] - ic_setup['long_put']['ask'])
+                
+                display_open_position_form(
+                    st.session_state.paper_portfolio,
+                    current_price,
+                    selected_expiry,
+                    setup_name,
+                    ic_setup['short_call']['strike'],
+                    ic_setup['long_call']['strike'],
+                    ic_setup['short_put']['strike'],
+                    ic_setup['long_put']['strike'],
+                    call_credit,
+                    put_credit
+                )
 
 def display_charts(df, current_price):
     """Display interactive charts with indicators"""
@@ -1106,81 +1668,73 @@ def display_full_options_chain(options_data, selected_expiry, current_price):
 # ==================== MAIN APP ====================
 
 def main():
+    # Initialize paper trading
+    if PAPER_TRADING_AVAILABLE:
+        initialize_paper_trading()
+    
     display_header()
     
     # Sidebar
     with st.sidebar:
         st.markdown("## ⚙️ Settings")
         
-        # API Source selection
+        # Simple choice: Demo or Yahoo Finance
         api_source = st.radio(
             "Data Source",
-            ["Demo Mode", "Alpaca (Recommended)", "TD Ameritrade", "Tradier"],
-            index=0
+            ["Demo Mode", "Yahoo Finance (Real Data)"],
+            index=1  # Default to Yahoo Finance
         )
         
-        api_key = None
-        api_secret = None
-        
-        if api_source == "Alpaca (Recommended)":
-            st.markdown("### 🦙 Alpaca Setup")
+        if api_source == "Yahoo Finance (Real Data)":
+            st.success("✅ **Yahoo Finance - FREE Real Data!**")
+            st.markdown("""
+            **What you get:**
+            - ✅ Real SPY options prices
+            - ✅ Real Bid/Ask/Last
+            - ✅ Real Implied Volatility
+            - ✅ Real Volume & Open Interest
+            - ✅ Calculated Greeks (accurate)
+            - ✅ 15+ expirations
+            - ✅ NO API key needed
+            - ✅ 100% FREE
             
-            api_key = st.text_input(
-                "API Key",
-                type="password",
-                help="From alpaca.markets dashboard"
-            )
-            
-            api_secret = st.text_input(
-                "API Secret",
-                type="password",
-                help="From alpaca.markets dashboard"
-            )
-            
-            if not api_key or not api_secret:
-                st.warning("📋 **Quick Setup:**")
-                st.markdown("""
-                1. Go to [alpaca.markets](https://alpaca.markets)
-                2. Sign up (free paper trading)
-                3. Dashboard → Generate API keys
-                4. Use **Paper Trading** keys
-                5. Paste both keys above
-                """)
-                st.info("💡 **Note:** Alpaca's options API has limited coverage. App will use demo data with real market structure if options unavailable.")
-            else:
-                st.info("⏳ Verifying Alpaca credentials...")
-        
-        elif api_source == "TD Ameritrade":
-            st.markdown("### 🔗 TD Ameritrade Setup")
-            api_key = st.text_input(
-                "Consumer Key",
-                type="password",
-                help="Get from developer.tdameritrade.com"
-            )
-            
-            if not api_key:
-                st.warning("📋 **Setup Steps:**")
-                st.markdown("""
-                1. Go to [developer.tdameritrade.com](https://developer.tdameritrade.com)
-                2. Register & create app
-                3. Copy Consumer Key
-                4. Paste above
-                """)
-            else:
-                st.success("✅ TD Ameritrade connected!")
-        
-        elif api_source == "Tradier":
-            api_key = st.text_input(
-                "Tradier API Key",
-                type="password",
-                help="Get free sandbox key at developer.tradier.com"
-            )
-            
-            if not api_key:
-                st.info("💡 Get free API key at [developer.tradier.com](https://developer.tradier.com)")
-        
+            **Data delay:** ~15 minutes (standard for free)
+            """)
         else:
-            st.info("💡 Using demo data with realistic options pricing and Greeks.")
+            st.info("💡 **Demo Mode**")
+            st.markdown("""
+            Perfect for:
+            - Learning Iron Condor strategy
+            - Understanding Greeks
+            - Testing the app
+            - Practicing analysis
+            
+            Uses realistic simulated data.
+            """)
+        
+        # Paper Trading Toggle
+        if PAPER_TRADING_AVAILABLE:
+            st.markdown("---")
+            st.markdown("### 📈 Paper Trading")
+            
+            paper_enabled = st.checkbox(
+                "Enable Paper Trading",
+                value=st.session_state.get('paper_trading_enabled', False),
+                help="Test strategies with virtual money"
+            )
+            
+            st.session_state.paper_trading_enabled = paper_enabled
+            
+            if paper_enabled:
+                stats = st.session_state.paper_portfolio.get_stats()
+                st.metric("Account Value", f"${stats['account_value']:,.2f}")
+                st.metric("Total P&L", f"${stats['total_pnl']:+,.2f}")
+                st.metric("Open Positions", stats['open_positions'])
+                
+                if st.button("📊 View Full Dashboard", use_container_width=True):
+                    st.session_state.show_paper_dashboard = True
+        
+        st.markdown("---")
         
         # Timeframe selection
         timeframe_map = {
@@ -1235,12 +1789,8 @@ def main():
         current_price = df['Close'].iloc[-1]
         
         # Fetch options data based on selected source
-        if api_source == "Alpaca (Recommended)":
-            options_data = get_alpaca_options_chain("SPY", api_key, api_secret)
-        elif api_source == "TD Ameritrade":
-            options_data = get_tdameritrade_options_chain("SPY", api_key)
-        elif api_source == "Tradier":
-            options_data = get_tradier_options_chain("SPY", api_key)
+        if api_source == "Yahoo Finance (Real Data)":
+            options_data = get_yahoo_options_chain("SPY")
         else:
             options_data = generate_demo_options_data()
         
@@ -1287,6 +1837,17 @@ def main():
     
     st.markdown("---")
     
+    # Paper Trading Dashboard (if requested)
+    if PAPER_TRADING_AVAILABLE and st.session_state.get('show_paper_dashboard', False):
+        with st.expander("📈 Paper Trading Dashboard", expanded=True):
+            display_paper_trading_dashboard(st.session_state.paper_portfolio)
+            
+            if st.button("✖ Close Dashboard"):
+                st.session_state.show_paper_dashboard = False
+                st.rerun()
+        
+        st.markdown("---")
+    
     # Charts section
     display_charts(df, current_price)
     
@@ -1311,3 +1872,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        
