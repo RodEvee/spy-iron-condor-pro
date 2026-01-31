@@ -351,6 +351,9 @@ def display_open_position_form(portfolio: PaperTradingPortfolio,
     
     st.markdown("### 📝 Open This Iron Condor Position")
     
+    # Create unique key prefix based on setup name
+    key_prefix = setup_name.replace(" ", "_").replace("⭐", "").replace("OPTIMAL", "")
+    
     col1, col2, col3 = st.columns([2, 2, 1])
     
     with col1:
@@ -373,7 +376,8 @@ def display_open_position_form(portfolio: PaperTradingPortfolio,
             min_value=1,
             max_value=10,
             value=1,
-            help="Each contract = 100 shares"
+            help="Each contract = 100 shares",
+            key=f"contracts_{key_prefix}"
         )
         
         total_credit = (call_credit + put_credit) * 100 * contracts
@@ -394,10 +398,11 @@ def display_open_position_form(portfolio: PaperTradingPortfolio,
         notes = st.text_area(
             "Notes (optional)",
             placeholder="e.g., Entry Score 8/9, Low IV",
-            height=100
+            height=100,
+            key=f"notes_{key_prefix}"
         )
         
-        if st.button("🚀 Open Position", type="primary", use_container_width=True):
+        if st.button("🚀 Open Position", type="primary", use_container_width=True, key=f"open_btn_{key_prefix}"):
             # Check if enough cash
             if abs(max_loss) > portfolio.cash:
                 st.error(f"❌ Insufficient cash! Need ${abs(max_loss):.2f}, have ${portfolio.cash:.2f}")
