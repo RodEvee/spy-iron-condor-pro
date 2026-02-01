@@ -1441,10 +1441,11 @@ def display_full_options_chain(options_data, selected_expiry, current_price):
         (df_chain['Strike'] <= current_price + 30)
     ].sort_values('Strike')
     
-    # Highlight ATM strikes
+    # Highlight ATM strikes with better styling
     def highlight_atm(row):
         if abs(row['Strike'] - current_price) < 5:
-            return ['background-color: #fff3cd'] * len(row)
+            # Light blue highlight for ATM options
+            return ['background-color: #e3f2fd; font-weight: bold'] * len(row)
         return [''] * len(row)
     
     st.dataframe(
