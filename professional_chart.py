@@ -98,10 +98,16 @@ def display_professional_chart(df, current_price, entry_score, risk_score):
         st.caption(f"{bb_color} {'Middle' if 30 <= bb_position <= 70 else 'Edge'}")
     
     with col5:
-        vol_ma = df['Volume'].rolling(20).mean().iloc[-1]
-        vol_color = "🟢" if volume < vol_ma * 1.2 else "🟡"
-        st.metric("Volume", f"{volume/1e6:.1f}M", delta=None)
-        st.caption(f"{vol_color} {'Normal' if volume < vol_ma * 1.2 else 'High'}")
+        vol_ma = df['Volume'].rolling(20).mean().iloc[-1] if len(df) >= 20 else df['Volume'].mean()
+        # Safe volume comparison
+        if pd.notna(vol_ma) and pd.notna(volume) and vol_ma > 0:
+            vol_color = "🟢" if volume < vol_ma * 1.2 else "🟡"
+            vol_status = 'Normal' if volume < vol_ma * 1.2 else 'High'
+        else:
+            vol_color = "🟡"
+            vol_status = 'N/A'
+        st.metric("Volume", f"{volume/1e6:.1f}M" if pd.notna(volume) else "N/A", delta=None)
+        st.caption(f"{vol_color} {vol_status}")
     
     # Create the main chart with subplots
     fig = make_subplots(
@@ -336,10 +342,14 @@ def display_professional_chart(df, current_price, entry_score, risk_score):
         else:
             conditions.append("❌ Strong trend")
         
-        if volume < vol_ma * 1.2:
+        # Volume check with safety for NaN
+        vol_ma = df['Volume'].rolling(20).mean().iloc[-1] if len(df) >= 20 else df['Volume'].mean()
+        if pd.notna(vol_ma) and pd.notna(volume) and volume < vol_ma * 1.2:
             conditions.append("✅ Normal volume")
-        else:
+        elif pd.notna(vol_ma) and pd.notna(volume):
             conditions.append("🟡 High volume")
+        else:
+            conditions.append("🟡 Volume N/A")
         
         green_count = sum(1 for c in conditions if c.startswith("✅"))
         
