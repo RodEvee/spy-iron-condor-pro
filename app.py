@@ -11,7 +11,7 @@ import plotly.graph_objects as go
 from datetime import datetime, timedelta
 import requests
 from typing import Dict, List, Tuple
-from mega_chart import display_mega_chart_with_explanations
+from professional_chart import display_professional_chart
 
 import time
 import json
@@ -1648,7 +1648,7 @@ def main():
         st.markdown("---")
     
     # Charts section
-    display_mega_chart_with_explanations(df, current_price, entry_score, risk_score)
+    display_professional_chart(df, current_price, entry_score, risk_score)
     
     st.markdown("---")
     
