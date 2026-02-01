@@ -109,6 +109,18 @@ def display_professional_chart(df, current_price, entry_score, risk_score):
         st.metric("Volume", f"{volume/1e6:.1f}M" if pd.notna(volume) else "N/A", delta=None)
         st.caption(f"{vol_color} {vol_status}")
     
+    # Add zoom instructions
+    st.info("""
+    📊 **Interactive Chart Features:**
+    • **Click & Drag** to zoom into specific time periods
+    • **Double-Click** to reset zoom
+    • **Scroll Wheel** to zoom in/out
+    • **Hover** to see detailed values
+    • **Camera Icon** to download chart as PNG
+    • **Pan Mode** (drag icon) to move around when zoomed
+    • **Box Zoom** to select exact area to zoom
+    """)
+    
     # Create the main chart with subplots
     fig = make_subplots(
         rows=5, cols=1,
@@ -286,7 +298,7 @@ def display_professional_chart(df, current_price, entry_score, risk_score):
             showlegend=False
         ), row=5, col=1)
     
-    # Update layout
+    # Update layout with zoom and interaction features
     fig.update_layout(
         height=1200,
         showlegend=True,
@@ -299,17 +311,46 @@ def display_professional_chart(df, current_price, entry_score, risk_score):
         ),
         hovermode='x unified',
         template='plotly_white',
-        margin=dict(t=100, b=50, l=50, r=50)
+        margin=dict(t=100, b=50, l=50, r=50),
+        # Enable zoom and pan
+        dragmode='zoom',  # Default to zoom mode
+        selectdirection='h'  # Horizontal zoom
     )
     
-    # Update x-axes
-    fig.update_xaxes(showgrid=True, gridwidth=1, gridcolor='rgba(128,128,128,0.2)')
+    # Update x-axes with zoom controls
+    fig.update_xaxes(
+        showgrid=True, 
+        gridwidth=1, 
+        gridcolor='rgba(128,128,128,0.2)',
+        rangeslider_visible=False,  # Clean look
+        fixedrange=False  # Allow zooming
+    )
     
-    # Update y-axes
-    fig.update_yaxes(showgrid=True, gridwidth=1, gridcolor='rgba(128,128,128,0.2)')
+    # Update y-axes with zoom controls
+    fig.update_yaxes(
+        showgrid=True, 
+        gridwidth=1, 
+        gridcolor='rgba(128,128,128,0.2)',
+        fixedrange=False  # Allow zooming
+    )
     
-    # Display the chart
-    st.plotly_chart(fig, use_container_width=True)
+    # Display the chart with zoom config
+    config = {
+        'displayModeBar': True,
+        'displaylogo': False,
+        'modeBarButtonsToAdd': ['drawline', 'drawopenpath', 'eraseshape'],
+        'modeBarButtonsToRemove': ['lasso2d', 'select2d'],
+        'toImageButtonOptions': {
+            'format': 'png',
+            'filename': 'spy_iron_condor_chart',
+            'height': 1200,
+            'width': 1600,
+            'scale': 2
+        },
+        'scrollZoom': True  # Enable scroll wheel zoom
+    }
+    
+    st.plotly_chart(fig, use_container_width=True, config=config)
     
     # Overall Signal Assessment
     st.markdown("---")
