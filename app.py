@@ -11,6 +11,13 @@ import plotly.graph_objects as go
 from datetime import datetime, timedelta
 import requests
 from typing import Dict, List, Tuple
+from enhanced_charts import (
+    create_enhanced_price_chart, create_enhanced_rsi_chart,
+    create_enhanced_macd_chart, create_enhanced_atr_chart,
+    create_stochastic_chart, create_ivr_chart,
+    create_volume_chart, display_indicator_explanation,
+    calculate_stochastic, calculate_ivr
+)
 import time
 import json
 import sys
@@ -1401,209 +1408,437 @@ def display_iron_condor_setups(options_data, current_price, selected_expiry):
                     put_credit
                 )
 
-def display_charts(df, current_price):
-    """Display interactive charts with indicators"""
-    st.markdown("### 📈 Technical Analysis Charts")
+def display_charts(df, current_price, entry_score=0, risk_score=0):
+    """Display comprehensive enhanced charts with all technical indicators"""
+    
+    st.markdown("## 📊 COMPREHENSIVE TECHNICAL ANALYSIS DASHBOARD")
+    st.markdown("---")
     
     if df.empty or len(df) < 20:
         st.warning("Not enough data to display charts")
         return
     
-    # Chart 1: Price with Bollinger Bands
-    fig1 = go.Figure()
+    # Calculate additional indicators
+    df = calculate_stochastic(df)
+    df = calculate_ivr(df)
     
-    # Price line
-    fig1.add_trace(go.Scatter(
-        x=df.index,
-        y=df['Close'],
-        name='SPY Price',
-        line=dict(color='#1f77b4', width=2)
-    ))
+    # Current readings
+    latest = df.iloc[-1]
     
-    # Bollinger Bands
-    if 'BB_upper' in df.columns:
-        fig1.add_trace(go.Scatter(
-            x=df.index,
-            y=df['BB_upper'],
-            name='Upper BB',
-            line=dict(color='rgba(255,0,0,0.3)', width=1, dash='dash'),
-            fill=None
-        ))
+    # ====================
+    # SECTION 1: MAIN PRICE CHART WITH SIGNALS
+    # ====================
+    
+    st.markdown("### 1️⃣ PRICE ACTION & ENTRY/EXIT SIGNALS")
+    
+    col1, col2 = st.columns([3, 1])
+    
+    with col1:
+        price_fig = create_enhanced_price_chart(df, current_price, entry_score, risk_score)
+        st.plotly_chart(price_fig, use_container_width=True)
+    
+    with col2:
+        st.markdown("#### 📖 How to Read:")
+        st.markdown("""
+        **What it shows:**
+        - Candlesticks = Price movement
+        - Orange line = 20-day average
+        - Blue line = 50-day trend
+        - Gray bands = Bollinger Bands
         
-        fig1.add_trace(go.Scatter(
-            x=df.index,
-            y=df['BB_lower'],
-            name='Lower BB',
-            line=dict(color='rgba(0,255,0,0.3)', width=1, dash='dash'),
-            fill='tonexty',
-            fillcolor='rgba(100,100,100,0.1)'
-        ))
+        **🟢 Green Arrows = ENTRY**
+        - Price in middle of bands
+        - Entry Score ≥ 6
+        - Risk Score ≤ 3
         
-        fig1.add_trace(go.Scatter(
-            x=df.index,
-            y=df['SMA20'],
-            name='SMA 20',
-            line=dict(color='orange', width=1, dash='dot')
-        ))
+        **🔴 Red Arrows = EXIT**
+        - Risk Score ≥ 5
+        - Price near bands
+        - Volatility spike
+        
+        **Why for Iron Condors:**
+        - Need price to stay in range
+        - Middle of BB = stable
+        - Near edges = risk!
+        """)
     
-    fig1.update_layout(
-        title='SPY Price with Bollinger Bands',
-        yaxis_title='Price ($)',
-        xaxis_title='Time',
-        height=400,
-        hovermode='x unified',
-        template='plotly_white'
-    )
+    # Current price interpretation
+    if 'BB_upper' in df.columns and 'BB_lower' in df.columns:
+        bb_position = (current_price - latest['BB_lower']) / (latest['BB_upper'] - latest['BB_lower'])
+        
+        if 0.4 <= bb_position <= 0.6:
+            price_interp = "PERFECT! Price in middle of range ✅"
+        elif 0.3 <= bb_position <= 0.7:
+            price_interp = "GOOD - Price in acceptable range"
+        elif bb_position < 0.3:
+            price_interp = "⚠️ Near lower band - Risk of breakdown"
+        else:
+            price_interp = "⚠️ Near upper band - Risk of breakout"
+        
+        display_indicator_explanation(
+            "Price Position",
+            f"{bb_position*100:.1f}% of BB range",
+            price_interp,
+            "Price at 40-60% of Bollinger Band range (middle)",
+            "Price breaks above 80% or below 20% (approaching bands)"
+        )
     
-    st.plotly_chart(fig1, use_container_width=True)
+    st.markdown("---")
     
-    # Chart 2 & 3: RSI and MACD side by side
+    # ====================
+    # SECTION 2: MOMENTUM INDICATORS (Side by Side)
+    # ====================
+    
+    st.markdown("### 2️⃣ MOMENTUM INDICATORS - Is Trend Weak? (Good for Iron Condors)")
+    
     col1, col2 = st.columns(2)
     
     with col1:
         # RSI Chart
-        if 'RSI' in df.columns:
-            fig2 = go.Figure()
+        rsi_fig = create_enhanced_rsi_chart(df)
+        if rsi_fig:
+            st.plotly_chart(rsi_fig, use_container_width=True)
             
-            fig2.add_trace(go.Scatter(
-                x=df.index,
-                y=df['RSI'],
-                name='RSI',
-                line=dict(color='purple', width=2)
-            ))
+            # RSI interpretation
+            current_rsi = latest.get('RSI', 50)
+            if 45 <= current_rsi <= 55:
+                rsi_interp = "EXCELLENT! Perfectly neutral ✅"
+            elif 40 <= current_rsi <= 60:
+                rsi_interp = "GOOD - In optimal zone"
+            elif current_rsi > 70:
+                rsi_interp = "⚠️ OVERBOUGHT - Avoid new positions!"
+            elif current_rsi < 30:
+                rsi_interp = "⚠️ OVERSOLD - Avoid new positions!"
+            else:
+                rsi_interp = "OK - Moderate momentum"
             
-            # Overbought/Oversold lines
-            fig2.add_hline(y=70, line_dash="dash", line_color="red", opacity=0.5)
-            fig2.add_hline(y=30, line_dash="dash", line_color="green", opacity=0.5)
-            fig2.add_hline(y=50, line_dash="dot", line_color="gray", opacity=0.3)
-            
-            # Shade neutral zone
-            fig2.add_hrect(y0=40, y1=60, fillcolor="green", opacity=0.1, line_width=0)
-            
-            fig2.update_layout(
-                title='RSI (14)',
-                yaxis_title='RSI',
-                xaxis_title='Time',
-                height=300,
-                yaxis=dict(range=[0, 100]),
-                template='plotly_white'
+            display_indicator_explanation(
+                "RSI (Relative Strength Index)",
+                f"{current_rsi:.1f}",
+                rsi_interp,
+                "RSI between 40-60 (neutral, no strong trend)",
+                "RSI below 30 (oversold) or above 70 (overbought)"
             )
-            
-            st.plotly_chart(fig2, use_container_width=True)
     
     with col2:
-        # MACD Chart
-        if 'MACD' in df.columns:
-            fig3 = go.Figure()
+        # Stochastic Chart
+        stoch_fig = create_stochastic_chart(df)
+        if stoch_fig:
+            st.plotly_chart(stoch_fig, use_container_width=True)
             
-            fig3.add_trace(go.Scatter(
-                x=df.index,
-                y=df['MACD'],
-                name='MACD',
-                line=dict(color='blue', width=2)
-            ))
+            # Stochastic interpretation
+            current_stoch_k = latest.get('Stoch_K', 50)
+            if 40 <= current_stoch_k <= 60:
+                stoch_interp = "EXCELLENT! Neutral momentum ✅"
+            elif 20 <= current_stoch_k <= 80:
+                stoch_interp = "GOOD - Moderate levels"
+            elif current_stoch_k > 80:
+                stoch_interp = "⚠️ Overbought - Expect pullback"
+            else:
+                stoch_interp = "⚠️ Oversold - Expect bounce"
             
-            fig3.add_trace(go.Scatter(
-                x=df.index,
-                y=df['MACD_signal'],
-                name='Signal',
-                line=dict(color='red', width=1)
-            ))
-            
-            # MACD histogram
-            macd_hist = df['MACD'] - df['MACD_signal']
-            colors = ['green' if x > 0 else 'red' for x in macd_hist]
-            
-            fig3.add_trace(go.Bar(
-                x=df.index,
-                y=macd_hist,
-                name='Histogram',
-                marker_color=colors,
-                opacity=0.3
-            ))
-            
-            fig3.add_hline(y=0, line_dash="dash", line_color="gray", opacity=0.5)
-            
-            fig3.update_layout(
-                title='MACD',
-                yaxis_title='MACD',
-                xaxis_title='Time',
-                height=300,
-                template='plotly_white'
+            display_indicator_explanation(
+                "Stochastic Oscillator",
+                f"%K: {current_stoch_k:.1f}",
+                stoch_interp,
+                "Both %K and %D between 20-80 (not extreme)",
+                "%K or %D above 80 or below 20 (extreme momentum)"
             )
-            
-            st.plotly_chart(fig3, use_container_width=True)
     
-    # Chart 4: ATR and Volume
-    col3, col4 = st.columns(2)
+    st.markdown("---")
+    
+    # ====================
+    # SECTION 3: TREND STRENGTH
+    # ====================
+    
+    st.markdown("### 3️⃣ TREND STRENGTH - Weak Trend = Good for Iron Condors")
+    
+    col1, col2 = st.columns([2, 1])
+    
+    with col1:
+        macd_fig = create_enhanced_macd_chart(df)
+        if macd_fig:
+            st.plotly_chart(macd_fig, use_container_width=True)
+    
+    with col2:
+        st.markdown("#### 📖 How to Read:")
+        st.markdown("""
+        **What it shows:**
+        - Blue line = MACD
+        - Red line = Signal
+        - Bars = Histogram (difference)
+        
+        **🟢 ENTRY Conditions:**
+        - MACD near zero (flat)
+        - Small histogram bars
+        - No strong trend
+        
+        **🔴 EXIT Conditions:**
+        - MACD far from zero
+        - Large histogram bars
+        - Strong crossover
+        
+        **Why for Iron Condors:**
+        - Need weak/no trend
+        - Strong trends = directional risk
+        - Flat MACD = range-bound price
+        """)
+    
+    # MACD interpretation
+    current_macd = latest.get('MACD', 0)
+    macd_strength = abs(current_macd / current_price * 100) if current_price > 0 else 0
+    
+    if macd_strength < 0.3:
+        macd_interp = "PERFECT! Very weak trend ✅"
+    elif macd_strength < 0.5:
+        macd_interp = "GOOD - Weak trend"
+    elif macd_strength < 1.0:
+        macd_interp = "MODERATE - Some trend present"
+    else:
+        macd_interp = "⚠️ STRONG TREND - High risk for Iron Condors!"
+    
+    display_indicator_explanation(
+        "MACD (Moving Average Convergence Divergence)",
+        f"{current_macd:.2f} (strength: {macd_strength:.2%})",
+        macd_interp,
+        "MACD close to zero, histogram small (weak trend)",
+        "MACD far from zero, large histogram (strong trend)"
+    )
+    
+    st.markdown("---")
+    
+    # ====================
+    # SECTION 4: VOLATILITY - MOST IMPORTANT FOR IRON CONDORS!
+    # ====================
+    
+    st.markdown("### 4️⃣ VOLATILITY - THE KEY FOR IRON CONDORS! 🔑")
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        # ATR Chart
+        atr_fig = create_enhanced_atr_chart(df)
+        if atr_fig:
+            st.plotly_chart(atr_fig, use_container_width=True)
+            
+            # ATR interpretation
+            current_atr = latest.get('ATR_pct', 1.0)
+            if current_atr < 0.8:
+                atr_interp = "🟢 EXCELLENT! LOW VOL - Prime for Iron Condors!"
+            elif current_atr < 1.2:
+                atr_interp = "GOOD - Moderate volatility"
+            elif current_atr < 2.0:
+                atr_interp = "⚠️ ELEVATED - Proceed with caution"
+            else:
+                atr_interp = "🔴 HIGH VOL - AVOID Iron Condors!"
+            
+            display_indicator_explanation(
+                "ATR % (Average True Range)",
+                f"{current_atr:.2f}%",
+                atr_interp,
+                "ATR < 0.8% (low volatility, tight range)",
+                "ATR > 2.0% (high volatility, wide swings)"
+            )
+    
+    with col2:
+        # IVR Chart
+        ivr_fig = create_ivr_chart(df)
+        if ivr_fig:
+            st.plotly_chart(ivr_fig, use_container_width=True)
+            
+            # IVR interpretation
+            current_ivr = latest.get('IVR', 50)
+            if current_ivr > 50:
+                ivr_interp = "🟢 HIGH IVR - Great for selling options!"
+            elif current_ivr > 25:
+                ivr_interp = "OK - Moderate premium levels"
+            else:
+                ivr_interp = "⚠️ LOW IVR - Poor premiums for selling"
+            
+            display_indicator_explanation(
+                "IVR (Implied Volatility Rank)",
+                f"{current_ivr:.1f}%",
+                ivr_interp,
+                "IVR > 50% (high premiums for selling options)",
+                "Position grows too large, IV drops significantly"
+            )
+    
+    st.markdown("---")
+    
+    # ====================
+    # SECTION 5: VOLUME CONFIRMATION
+    # ====================
+    
+    st.markdown("### 5️⃣ VOLUME - Confirms Price Moves")
+    
+    col1, col2 = st.columns([3, 1])
+    
+    with col1:
+        vol_fig = create_volume_chart(df)
+        if vol_fig:
+            st.plotly_chart(vol_fig, use_container_width=True)
+    
+    with col2:
+        st.markdown("#### 📖 How to Read:")
+        st.markdown("""
+        **What it shows:**
+        - Green bars = Up days
+        - Red bars = Down days
+        - Blue line = 20-day average
+        
+        **Good Signs:**
+        - Volume near average
+        - No huge spikes
+        - Steady, normal flow
+        
+        **Warning Signs:**
+        - Volume >> average
+        - Sudden spikes
+        - Unusual activity
+        
+        **Why for Iron Condors:**
+        - Low volume = low interest
+        - Normal flow = stable
+        - Spikes = potential moves
+        """)
+    
+    # Volume interpretation
+    current_vol = latest.get('Volume', 0)
+    if len(df) >= 20:
+        avg_vol = df['Volume'].tail(20).mean()
+        vol_ratio = current_vol / avg_vol if avg_vol > 0 else 1
+        
+        if 0.7 <= vol_ratio <= 1.3:
+            vol_interp = "GOOD - Normal volume"
+        elif vol_ratio < 0.7:
+            vol_interp = "LOW - Quiet market"
+        else:
+            vol_interp = "⚠️ HIGH - Unusual activity!"
+        
+        display_indicator_explanation(
+            "Volume",
+            f"{current_vol:,.0f} ({vol_ratio:.1f}x avg)",
+            vol_interp,
+            "Volume at or below average (calm market)",
+            "Volume spike (>2x average) suggests breakout risk"
+        )
+    
+    st.markdown("---")
+    
+    # ====================
+    # SUMMARY DASHBOARD
+    # ====================
+    
+    st.markdown("### 🎯 OVERALL ASSESSMENT FOR IRON CONDORS")
+    
+    # Calculate overall score
+    score = 0
+    max_score = 6
+    signals = []
+    
+    # Price position
+    if 'BB_upper' in df.columns:
+        bb_pos = (current_price - latest['BB_lower']) / (latest['BB_upper'] - latest['BB_lower'])
+        if 0.4 <= bb_pos <= 0.6:
+            score += 1
+            signals.append("✅ Price centered")
+        elif bb_pos < 0.3 or bb_pos > 0.7:
+            signals.append("⚠️ Price near edge")
+    
+    # RSI
+    rsi = latest.get('RSI', 50)
+    if 40 <= rsi <= 60:
+        score += 1
+        signals.append("✅ RSI neutral")
+    elif rsi < 30 or rsi > 70:
+        signals.append("⚠️ RSI extreme")
+    
+    # MACD
+    macd_str = abs(latest.get('MACD', 0) / current_price * 100)
+    if macd_str < 0.3:
+        score += 1
+        signals.append("✅ Weak trend")
+    elif macd_str > 1.0:
+        signals.append("⚠️ Strong trend")
+    
+    # ATR
+    atr = latest.get('ATR_pct', 1.0)
+    if atr < 0.8:
+        score += 1
+        signals.append("✅ Low volatility")
+    elif atr > 2.0:
+        signals.append("⚠️ High volatility")
+    
+    # IVR
+    ivr = latest.get('IVR', 50)
+    if ivr > 50:
+        score += 1
+        signals.append("✅ High IVR")
+    elif ivr < 25:
+        signals.append("⚠️ Low IVR")
+    
+    # Stochastic
+    stoch = latest.get('Stoch_K', 50)
+    if 20 <= stoch <= 80:
+        score += 1
+        signals.append("✅ Stoch normal")
+    else:
+        signals.append("⚠️ Stoch extreme")
+    
+    # Overall rating
+    rating_pct = (score / max_score) * 100
+    
+    if rating_pct >= 83:  # 5-6 out of 6
+        overall_color = "green"
+        overall_text = "🟢 EXCELLENT SETUP - STRONG ENTRY"
+        overall_action = "✅ Open Iron Condor positions now!"
+    elif rating_pct >= 66:  # 4 out of 6
+        overall_color = "lightgreen"
+        overall_text = "🟢 GOOD SETUP - ENTER"
+        overall_action = "✅ Favorable conditions for Iron Condors"
+    elif rating_pct >= 50:  # 3 out of 6
+        overall_color = "yellow"
+        overall_text = "🟡 NEUTRAL - WAIT FOR BETTER"
+        overall_action = "⏸️ Monitor for improvement"
+    else:
+        overall_color = "red"
+        overall_text = "🔴 POOR SETUP - AVOID"
+        overall_action = "❌ Do NOT enter new Iron Condors"
+    
+    # Display summary
+    col1, col2, col3 = st.columns([1, 2, 1])
+    
+    with col1:
+        st.markdown(f"""
+        <div style="background: linear-gradient(135deg, {overall_color}44 0%, {overall_color}22 100%);
+                    padding: 30px; border-radius: 15px; text-align: center; border: 3px solid {overall_color};">
+            <h2 style="color: {overall_color}; margin: 0;">{score}/{max_score}</h2>
+            <p style="margin: 5px 0;">Indicators Green</p>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    with col2:
+        st.markdown(f"""
+        <div style="background: linear-gradient(135deg, {overall_color}44 0%, {overall_color}22 100%);
+                    padding: 20px; border-radius: 15px; border: 3px solid {overall_color};">
+            <h3 style="color: {overall_color}; margin: 0 0 10px 0; text-align: center;">{overall_text}</h3>
+            <p style="text-align: center; font-size: 18px; margin: 0;"><strong>{overall_action}</strong></p>
+            <hr style="border-color: {overall_color};">
+            <div style="font-size: 14px;">
+                {'<br>'.join(signals)}
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
     
     with col3:
-        # ATR Chart
-        if 'ATR_pct' in df.columns:
-            fig4 = go.Figure()
-            
-            fig4.add_trace(go.Scatter(
-                x=df.index,
-                y=df['ATR_pct'],
-                name='ATR %',
-                line=dict(color='darkred', width=2),
-                fill='tozeroy',
-                fillcolor='rgba(139,0,0,0.1)'
-            ))
-            
-            # Volatility zones
-            fig4.add_hrect(y0=0, y1=0.8, fillcolor="green", opacity=0.05, line_width=0)
-            fig4.add_hrect(y0=2.0, y1=10, fillcolor="red", opacity=0.05, line_width=0)
-            
-            fig4.add_hline(y=0.8, line_dash="dash", line_color="green", opacity=0.5)
-            fig4.add_hline(y=2.0, line_dash="dash", line_color="red", opacity=0.5)
-            
-            fig4.update_layout(
-                title='ATR % (Volatility)',
-                yaxis_title='ATR %',
-                xaxis_title='Time',
-                height=300,
-                template='plotly_white'
-            )
-            
-            st.plotly_chart(fig4, use_container_width=True)
-    
-    with col4:
-        # Volume Chart
-        if 'Volume' in df.columns:
-            fig5 = go.Figure()
-            
-            # Color volume bars based on price change
-            colors = ['green' if df['Close'].iloc[i] >= df['Close'].iloc[i-1] else 'red' 
-                     for i in range(1, len(df))]
-            colors = ['gray'] + colors  # First bar
-            
-            fig5.add_trace(go.Bar(
-                x=df.index,
-                y=df['Volume'],
-                name='Volume',
-                marker_color=colors,
-                opacity=0.7
-            ))
-            
-            # Volume moving average
-            vol_ma = df['Volume'].rolling(20, min_periods=1).mean()
-            fig5.add_trace(go.Scatter(
-                x=df.index,
-                y=vol_ma,
-                name='Vol MA(20)',
-                line=dict(color='blue', width=2)
-            ))
-            
-            fig5.update_layout(
-                title='Volume',
-                yaxis_title='Volume',
-                xaxis_title='Time',
-                height=300,
-                template='plotly_white'
-            )
-            
-            st.plotly_chart(fig5, use_container_width=True)
+        st.markdown(f"""
+        <div style="background: linear-gradient(135deg, {overall_color}44 0%, {overall_color}22 100%);
+                    padding: 30px; border-radius: 15px; text-align: center; border: 3px solid {overall_color};">
+            <h2 style="color: {overall_color}; margin: 0;">{rating_pct:.0f}%</h2>
+            <p style="margin: 5px 0;">Confidence</p>
+        </div>
+        """, unsafe_allow_html=True)
+
 
 def display_full_options_chain(options_data, selected_expiry, current_price):
     """Display full options chain with all Greeks"""
@@ -1849,7 +2084,7 @@ def main():
         st.markdown("---")
     
     # Charts section
-    display_charts(df, current_price)
+    display_charts(df, current_price, entry_score, risk_score)
     
     st.markdown("---")
     
@@ -1872,4 +2107,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
