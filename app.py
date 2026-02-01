@@ -1421,6 +1421,14 @@ def display_full_options_chain(options_data, selected_expiry, current_price):
     """Display full options chain with all Greeks"""
     st.markdown("### 📋 Full Options Chain")
     
+    # Add legend for color coding
+    st.markdown("""
+    **Color Legend:** 
+    🔵 **ATM** (At-The-Money) - Dark blue with white text | 
+    ⚪ **ITM** (In-The-Money) - White with black text | 
+    ⬜ **OTM** (Out-of-The-Money) - Light gray
+    """)
+    
     if selected_expiry not in options_data:
         st.warning("No options data available for this expiration")
         return
@@ -1454,15 +1462,26 @@ def display_full_options_chain(options_data, selected_expiry, current_price):
         (df_chain['Strike'] <= current_price + 30)
     ].sort_values('Strike')
     
-    # Highlight ATM strikes with better contrast
-    def highlight_atm(row):
-        if abs(row['Strike'] - current_price) < 5:
-            # Strong contrast: dark background with white text
+    # Highlight options based on moneyness
+    def highlight_options(row):
+        strike = row['Strike']
+        option_type = row['Type']
+        
+        # ATM options (within $5 of current price) - Dark blue with white text
+        if abs(strike - current_price) < 5:
             return ['background-color: #1976d2; color: white; font-weight: bold'] * len(row)
-        # Alternate row coloring for better readability
-        return ['background-color: #f5f5f5'] * len(row) if row.name % 2 == 0 else ['background-color: white'] * len(row)
+        
+        # ITM options - White background with black text
+        is_call_itm = option_type == 'CALL' and strike < current_price
+        is_put_itm = option_type == 'PUT' and strike > current_price
+        
+        if is_call_itm or is_put_itm:
+            return ['background-color: white; color: black; font-weight: normal'] * len(row)
+        
+        # OTM options - Light gray background (alternate rows)
+        return ['background-color: #f5f5f5'] * len(row) if row.name % 2 == 0 else ['background-color: #fafafa'] * len(row)
     
-    styled_df = df_filtered.style.apply(highlight_atm, axis=1).format({
+    styled_df = df_filtered.style.apply(highlight_options, axis=1).format({
         'Last': '${:.2f}',
         'Bid': '${:.2f}',
         'Ask': '${:.2f}',
