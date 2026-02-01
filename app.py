@@ -7,7 +7,6 @@ from datetime import datetime
 # ── Modular imports ────────────────────────────────────────────────────────
 from src.data import get_spy_data, get_yahoo_options_chain, generate_demo_options_data
 from src.analysis import calculate_indicators, calculate_iron_condor_score, find_iron_condor_strikes
-from src.greeks import calculate_delta  # only delta used right now, others available
 from src.paper import initialize_paper_trading
 from ui.components import (
     display_header,
@@ -15,10 +14,9 @@ from ui.components import (
     display_current_metrics,
     display_expiry_selector
 )
-from ui.professional_chart import display_professional_chart
 from ui.paper_trading_ui import display_paper_trading_panel
 
-# ── Page config & CSS ──────────────────────────────────────────────────────
+# ── Page config & minimal CSS ──────────────────────────────────────────────
 st.set_page_config(
     page_title="SPY Iron Condor Pro",
     page_icon="📊",
@@ -41,9 +39,9 @@ def main():
 
     # ── Sidebar ────────────────────────────────────────────────────────────────
     with st.sidebar:
-        st.header("⚙️ Controls")
+        st.header("Controls")
         data_source = st.radio("Data Source", ["Demo Mode", "Yahoo Finance (real)"], index=1)
-        timeframe_label = st.selectbox("Chart Timeframe", [
+        timeframe_label = st.selectbox("Timeframe (for indicators)", [
             "Daily (5d)", "Hourly (5d)", "30 min (2d)", "15 min (1d)"
         ])
         paper_enabled = st.checkbox("Enable Paper Trading", value=False)
@@ -60,11 +58,11 @@ def main():
     with st.spinner("Fetching market & options data..."):
         df = get_spy_data(period=period, interval=interval)
         if df.empty:
-            st.error("Could not load price data – using minimal fallback")
-            df = pd.DataFrame({'Close': [580.0]}, index=[datetime.now()])
-
-        df = calculate_indicators(df)
-        current_price = float(df['Close'].iloc[-1]) if not df.empty else 580.0
+            st.warning("No price data loaded – using fallback price")
+            current_price = 580.0
+        else:
+            df = calculate_indicators(df)
+            current_price = float(df['Close'].iloc[-1]) if not df.empty else 580.0
 
         if data_source == "Yahoo Finance (real)":
             options_data = get_yahoo_options_chain("SPY")
@@ -72,7 +70,7 @@ def main():
             options_data = generate_demo_options_data()
 
         if not options_data:
-            st.warning("No options data – falling back to demo")
+            st.warning("No options chain loaded – using demo chain")
             options_data = generate_demo_options_data()
 
     expirations = sorted(options_data.keys())
@@ -86,46 +84,46 @@ def main():
     display_signal_box(signal)
     st.markdown("---")
 
-    # ── Main chart ─────────────────────────────────────────────────────────────
-    display_professional_chart(df, current_price, entry_score, risk_score)
-    st.markdown("---")
-
-    # ── Paper Trading ──────────────────────────────────────────────────────────
-    if paper_enabled:
-        display_paper_trading_panel(
-            options_data=options_data,
-            current_price=current_price,
-            selected_expiry=selected_expiry
-        )
-        st.markdown("---")
-
-    # ── Optional: Recommended Iron Condor setups (expandable cards) ────────────
+    # ── Recommended Iron Condor setups ─────────────────────────────────────────
     st.subheader("🎯 Recommended Iron Condor Setups")
-    col_setup = st.columns(3)
+    col1, col2, col3 = st.columns(3)
 
     deltas = [0.16, 0.20, 0.30]
     labels = ["Conservative (16Δ)", "Balanced (20Δ)", "Aggressive (30Δ)"]
 
     for i, (delta, label) in enumerate(zip(deltas, labels)):
-        with col_setup[i]:
+        with locals()[f"col{i+1}"]:
             with st.expander(label, expanded=(delta == 0.20)):
                 setup = find_iron_condor_strikes(
                     options_data, selected_expiry, current_price, target_delta=delta
                 )
                 if setup:
-                    st.markdown(f"**POP estimate:** {setup['pop']}%")
-                    st.markdown(f"**Max Profit:** ${setup['max_profit']:.2f}")
-                    st.markdown(f"**Max Loss:** ${setup['max_loss']:.2f}")
+                    st.metric("POP estimate", f"{setup['pop']}%")
+                    st.metric("Max Profit", f"${setup['max_profit']:.2f}")
+                    st.metric("Max Loss", f"${setup['max_loss']:.2f}")
 
                     st.markdown("**Call Spread**")
-                    st.write(f"Short: {setup['short_call']['strike']} @ {setup['short_call']['bid']:.2f}")
+                    st.write(f"Short: **{setup['short_call']['strike']}** @ {setup['short_call']['bid']:.2f}")
                     st.write(f"Long:  {setup['long_call']['strike']} @ {setup['long_call']['ask']:.2f}")
 
                     st.markdown("**Put Spread**")
-                    st.write(f"Short: {setup['short_put']['strike']} @ {setup['short_put']['bid']:.2f}")
+                    st.write(f"Short: **{setup['short_put']['strike']}** @ {setup['short_put']['bid']:.2f}")
                     st.write(f"Long:  {setup['long_put']['strike']} @ {setup['long_put']['ask']:.2f}")
+
+                    st.info(f"Breakevens: {setup['breakeven_lower']:.1f} – {setup['breakeven_upper']:.1f}")
                 else:
-                    st.info("No valid setup for this delta")
+                    st.info("No valid strikes found for this delta")
+
+    st.markdown("---")
+
+    # ── Paper Trading ──────────────────────────────────────────────────────────
+    if paper_enabled:
+        st.subheader("💼 Paper Trading")
+        display_paper_trading_panel(
+            options_data=options_data,
+            current_price=current_price,
+            selected_expiry=selected_expiry
+        )
 
     # ── Auto-refresh ───────────────────────────────────────────────────────────
     if auto_refresh:
