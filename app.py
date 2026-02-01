@@ -1402,6 +1402,19 @@ def display_iron_condor_setups(options_data, current_price, selected_expiry):
                     call_credit,
                     put_credit
                 )
+            elif PAPER_TRADING_AVAILABLE:
+                # Show message when paper trading is available but not enabled
+                st.markdown("---")
+                st.info("""
+                💡 **Want to practice this trade?** 
+                
+                Enable **Paper Trading** in the sidebar to:
+                - Open virtual positions with $10,000 starting cash
+                - Track P&L in real-time
+                - Build confidence before trading real money
+                
+                👈 Look for "📈 Paper Trading" in the left sidebar!
+                """)
 
 
 def display_full_options_chain(options_data, selected_expiry, current_price):
@@ -1441,26 +1454,33 @@ def display_full_options_chain(options_data, selected_expiry, current_price):
         (df_chain['Strike'] <= current_price + 30)
     ].sort_values('Strike')
     
-    # Highlight ATM strikes with better styling
+    # Highlight ATM strikes with better contrast
     def highlight_atm(row):
         if abs(row['Strike'] - current_price) < 5:
-            # Light blue highlight for ATM options
-            return ['background-color: #e3f2fd; font-weight: bold'] * len(row)
-        return [''] * len(row)
+            # Strong contrast: dark background with white text
+            return ['background-color: #1976d2; color: white; font-weight: bold'] * len(row)
+        # Alternate row coloring for better readability
+        return ['background-color: #f5f5f5'] * len(row) if row.name % 2 == 0 else ['background-color: white'] * len(row)
+    
+    styled_df = df_filtered.style.apply(highlight_atm, axis=1).format({
+        'Last': '${:.2f}',
+        'Bid': '${:.2f}',
+        'Ask': '${:.2f}',
+        'Delta': '{:.4f}',
+        'Gamma': '{:.4f}',
+        'Theta': '{:.4f}',
+        'Vega': '{:.4f}',
+        'Rho': '{:.4f}',
+        'Volume': '{:,.0f}',
+        'OI': '{:,.0f}'
+    }).set_properties(**{
+        'text-align': 'right',
+        'padding': '8px',
+        'border': '1px solid #ddd'
+    })
     
     st.dataframe(
-        df_filtered.style.apply(highlight_atm, axis=1).format({
-            'Last': '${:.2f}',
-            'Bid': '${:.2f}',
-            'Ask': '${:.2f}',
-            'Delta': '{:.4f}',
-            'Gamma': '{:.4f}',
-            'Theta': '{:.4f}',
-            'Vega': '{:.4f}',
-            'Rho': '{:.4f}',
-            'Volume': '{:,.0f}',
-            'OI': '{:,.0f}'
-        }),
+        styled_df,
         use_container_width=True,
         height=400
     )
