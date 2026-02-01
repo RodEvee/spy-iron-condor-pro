@@ -11,7 +11,6 @@ import plotly.graph_objects as go
 from datetime import datetime, timedelta
 import requests
 from typing import Dict, List, Tuple
-from professional_chart import display_professional_chart
 
 import time
 import json
@@ -1686,11 +1685,6 @@ def main():
                 st.rerun()
         
         st.markdown("---")
-    
-    # Charts section
-    display_professional_chart(df, current_price, entry_score, risk_score)
-    
-    st.markdown("---")
     
     # Iron Condor setups
     display_iron_condor_setups(options_data, current_price, selected_expiry)
