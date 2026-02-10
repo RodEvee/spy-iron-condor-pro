@@ -310,7 +310,9 @@ def display_professional_chart(df, current_price, entry_score, risk_score):
             x=1
         ),
         hovermode='x unified',
-        template='plotly_white',
+        template='plotly_dark',
+        paper_bgcolor='rgba(0,0,0,0)',
+        plot_bgcolor='rgba(15,23,42,0.8)',
         margin=dict(t=100, b=50, l=50, r=50),
         # Enable zoom and pan
         dragmode='zoom',  # Default to zoom mode

@@ -48,7 +48,7 @@ def get_yahoo_options_chain(symbol="SPY"):
             puts  = opt_chain.puts
 
             opts = []
-            dte = max(0, (datetime.strptime(exp_date, '%Y-%m-%d') - datetime.now()).days + 1/24)
+            dte = max(1, (datetime.strptime(exp_date, '%Y-%m-%d') - datetime.now()).days)
 
             for side, df_side in [('call', calls), ('put', puts)]:
                 for _, row in df_side.iterrows():
@@ -90,23 +90,59 @@ def get_yahoo_options_chain(symbol="SPY"):
 
 
 def generate_demo_options_data():
-    # very simplified placeholder – you can keep your original if preferred
+    """Generate realistic demo options data with proper calls AND puts at each strike"""
     current_price = 580.0
-    expirations = [(datetime.now() + timedelta(days=d)).strftime('%Y-%m-%d') for d in [7,14,21,30,45,60]]
+    expirations = [(datetime.now() + timedelta(days=d)).strftime('%Y-%m-%d') for d in [7, 14, 21, 30, 45, 60]]
     data = {}
+
     for exp in expirations:
         dte = max(1, (datetime.strptime(exp, '%Y-%m-%d') - datetime.now()).days)
         opts = []
-        for strike in np.arange(current_price-40, current_price+45, 5):
-            iv = 0.18 + abs(strike - current_price)/current_price * 0.4
-            delta = 0.5 + (current_price - strike)/(current_price*2)
+
+        for strike in np.arange(current_price - 40, current_price + 45, 5):
+            iv = 0.18 + abs(strike - current_price) / current_price * 0.4
+
+            # Generate CALL
+            call_delta = calculate_delta(current_price, strike, dte, iv, 'call')
+            call_theta = calculate_theta(current_price, strike, dte, iv, 'call')
+            call_intrinsic = max(0, current_price - strike)
+            call_price = max(0.05, call_intrinsic + iv * np.sqrt(dte / 365) * current_price * 0.1)
             opts.append({
                 'strike': strike,
-                'type': 'call' if strike > current_price else 'put',
-                'bid': max(0.05, abs(current_price - strike)*0.4 + iv*5),
-                'ask': max(0.10, abs(current_price - strike)*0.4 + iv*5 + 0.05),
-                'greeks': {'delta': round(delta if strike > current_price else delta-1, 4)},
+                'type': 'call',
+                'expiration_date': exp,
+                'bid': round(max(0.05, call_price - 0.03), 2),
+                'ask': round(max(0.10, call_price + 0.03), 2),
+                'greeks': {
+                    'delta': round(call_delta, 4),
+                    'gamma': round(calculate_gamma(current_price, strike, dte, iv), 4),
+                    'theta': round(call_theta, 4),
+                    'vega': round(calculate_vega(current_price, strike, dte, iv), 4),
+                    'rho': round(calculate_rho(current_price, strike, dte, iv, 'call'), 4),
+                },
                 'iv': round(iv, 4)
             })
+
+            # Generate PUT
+            put_delta = calculate_delta(current_price, strike, dte, iv, 'put')
+            put_theta = calculate_theta(current_price, strike, dte, iv, 'put')
+            put_intrinsic = max(0, strike - current_price)
+            put_price = max(0.05, put_intrinsic + iv * np.sqrt(dte / 365) * current_price * 0.1)
+            opts.append({
+                'strike': strike,
+                'type': 'put',
+                'expiration_date': exp,
+                'bid': round(max(0.05, put_price - 0.03), 2),
+                'ask': round(max(0.10, put_price + 0.03), 2),
+                'greeks': {
+                    'delta': round(put_delta, 4),
+                    'gamma': round(calculate_gamma(current_price, strike, dte, iv), 4),
+                    'theta': round(put_theta, 4),
+                    'vega': round(calculate_vega(current_price, strike, dte, iv), 4),
+                    'rho': round(calculate_rho(current_price, strike, dte, iv, 'put'), 4),
+                },
+                'iv': round(iv, 4)
+            })
+
         data[exp] = opts
     return data

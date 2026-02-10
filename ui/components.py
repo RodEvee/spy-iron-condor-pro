@@ -6,8 +6,9 @@ def display_header():
     """Main app title and subtitle"""
     st.markdown(
         '<div class="main-header">📊 SPY IRON CONDOR PRO</div>'
-        '<div style="font-size:18px; color:#666; text-align:center; margin-bottom:30px;">'
-        'Real-time signals • Multiple expirations • Full Greeks</div>',
+        '<div class="sub-header">'
+        'Real-time signals • Multiple expirations • Full Greeks • Paper Trading'
+        '</div>',
         unsafe_allow_html=True
     )
 
@@ -54,16 +55,16 @@ def display_current_metrics(df, current_price: float, entry_score: int, risk_sco
 
     with col5:
         atr_pct = df.iloc[-1].get('ATR_pct', 1.0) if 'ATR_pct' in df.columns else 1.0
-        st.metric("Vol %", f"{atr_pct:.2f}%", "Low" if atr_pct < 1.0 else "High")
+        st.metric("ATR %", f"{atr_pct:.2f}%", "Low Vol ✅" if atr_pct < 1.5 else "High Vol ⚠️")
 
 
-def display_expiry_selector(expirations: list[str]):
+def display_expiry_selector(expirations: list):
     """Horizontal buttons for expiration selection"""
     st.subheader("📅 Select Expiration")
 
     if not expirations:
         st.warning("No expirations available")
-        return expirations[0] if expirations else None
+        return None
 
     cols = st.columns(min(6, len(expirations)))
     selected = st.session_state.get("selected_expiry", expirations[0])

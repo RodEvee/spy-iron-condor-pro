@@ -3,6 +3,9 @@ from math import log, sqrt, exp, pi
 from scipy.stats import norm
 import numpy as np
 
+RISK_FREE_RATE = 0.045  # Approximate 2026 short-term risk-free rate
+
+
 def calculate_delta(S: float, K: float, T: float, sigma: float, option_type: str = 'call') -> float:
     """Delta: Rate of change of option price with respect to underlying price"""
     if T <= 0:
@@ -12,13 +15,13 @@ def calculate_delta(S: float, K: float, T: float, sigma: float, option_type: str
             return -1.0 if S < K else 0.0
 
     try:
-        r = 0.045  # Approximate 2026 short-term risk-free rate
+        r = RISK_FREE_RATE
         d1 = (log(S / K) + (r + 0.5 * sigma**2) * (T / 365)) / (sigma * sqrt(T / 365))
         if option_type == 'call':
             return norm.cdf(d1)
         else:
             return norm.cdf(d1) - 1
-    except:
+    except (ValueError, ZeroDivisionError, OverflowError):
         return 0.5 if option_type == 'call' else -0.5
 
 
@@ -28,10 +31,10 @@ def calculate_gamma(S: float, K: float, T: float, sigma: float) -> float:
         return 0.0
 
     try:
-        r = 0.045
+        r = RISK_FREE_RATE
         d1 = (log(S / K) + (r + 0.5 * sigma**2) * (T / 365)) / (sigma * sqrt(T / 365))
         return norm.pdf(d1) / (S * sigma * sqrt(T / 365))
-    except:
+    except (ValueError, ZeroDivisionError, OverflowError):
         return 0.01
 
 
@@ -41,7 +44,7 @@ def calculate_theta(S: float, K: float, T: float, sigma: float, option_type: str
         return 0.0
 
     try:
-        r = 0.045
+        r = RISK_FREE_RATE
         d1 = (log(S / K) + (r + 0.5 * sigma**2) * (T / 365)) / (sigma * sqrt(T / 365))
         d2 = d1 - sigma * sqrt(T / 365)
 
@@ -57,7 +60,7 @@ def calculate_theta(S: float, K: float, T: float, sigma: float, option_type: str
             )
 
         return theta / 365  # Per day
-    except:
+    except (ValueError, ZeroDivisionError, OverflowError):
         return -0.05
 
 
@@ -67,10 +70,10 @@ def calculate_vega(S: float, K: float, T: float, sigma: float) -> float:
         return 0.0
 
     try:
-        r = 0.045
+        r = RISK_FREE_RATE
         d1 = (log(S / K) + (r + 0.5 * sigma**2) * (T / 365)) / (sigma * sqrt(T / 365))
         return S * norm.pdf(d1) * sqrt(T / 365) / 100  # Per 1% change
-    except:
+    except (ValueError, ZeroDivisionError, OverflowError):
         return 0.15
 
 
@@ -80,7 +83,7 @@ def calculate_rho(S: float, K: float, T: float, sigma: float, option_type: str =
         return 0.0
 
     try:
-        r = 0.045
+        r = RISK_FREE_RATE
         d1 = (log(S / K) + (r + 0.5 * sigma**2) * (T / 365)) / (sigma * sqrt(T / 365))
         d2 = d1 - sigma * sqrt(T / 365)
 
@@ -88,5 +91,5 @@ def calculate_rho(S: float, K: float, T: float, sigma: float, option_type: str =
             return K * (T / 365) * exp(-r * T / 365) * norm.cdf(d2) / 100
         else:
             return -K * (T / 365) * exp(-r * T / 365) * norm.cdf(-d2) / 100
-    except:
+    except (ValueError, ZeroDivisionError, OverflowError):
         return 0.01

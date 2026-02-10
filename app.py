@@ -15,8 +15,9 @@ from ui.components import (
     display_expiry_selector
 )
 from ui.paper_trading_ui import display_paper_trading_panel
+from ui.professional_chart import display_professional_chart
 
-# ── Page config & minimal CSS ──────────────────────────────────────────────
+# ── Page config ────────────────────────────────────────────────────────────
 st.set_page_config(
     page_title="SPY Iron Condor Pro",
     page_icon="📊",
@@ -24,13 +25,142 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
+# ── Dark Professional Theme CSS ────────────────────────────────────────────
 st.markdown("""
 <style>
-    .main-header { font-size: 42px; font-weight: bold; color: #1f77b4; text-align: center; margin-bottom: 10px; }
-    .signal-strong-entry { background: linear-gradient(135deg, #11998e, #38ef7d); padding: 20px; border-radius: 10px; color: white; font-size: 24px; text-align: center; box-shadow: 0 4px 8px rgba(0,0,0,0.1); }
-    .signal-exit { background: linear-gradient(135deg, #ee0979, #ff6a00); padding: 20px; border-radius: 10px; color: white; font-size: 24px; text-align: center; box-shadow: 0 4px 8px rgba(0,0,0,0.1); }
-    .signal-neutral { background: linear-gradient(135deg, #f2994a, #f2c94c); padding: 20px; border-radius: 10px; color: white; font-size: 24px; text-align: center; box-shadow: 0 4px 8px rgba(0,0,0,0.1); }
-    .expiry-badge { background: #e3f2fd; color: #1976d2; padding: 6px 14px; border-radius: 20px; font-weight: 600; }
+    /* ── Base Dark Theme ────────────────────────────────────── */
+    .stApp {
+        background: linear-gradient(180deg, #0a0e17 0%, #111827 100%);
+        color: #e2e8f0;
+    }
+
+    /* ── Header ──────────────────────────────────────────────── */
+    .main-header {
+        font-size: 42px;
+        font-weight: 800;
+        background: linear-gradient(135deg, #00d2ff, #3a7bd5);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        text-align: center;
+        margin-bottom: 4px;
+        letter-spacing: -0.5px;
+    }
+    .sub-header {
+        font-size: 16px;
+        color: #64748b;
+        text-align: center;
+        margin-bottom: 30px;
+        letter-spacing: 2px;
+        text-transform: uppercase;
+    }
+
+    /* ── Signal Boxes ────────────────────────────────────────── */
+    .signal-strong-entry {
+        background: linear-gradient(135deg, #064e3b, #059669);
+        padding: 22px;
+        border-radius: 12px;
+        color: #ecfdf5;
+        font-size: 26px;
+        font-weight: 700;
+        text-align: center;
+        box-shadow: 0 0 30px rgba(5, 150, 105, 0.3);
+        border: 1px solid rgba(16, 185, 129, 0.3);
+    }
+    .signal-exit {
+        background: linear-gradient(135deg, #7f1d1d, #dc2626);
+        padding: 22px;
+        border-radius: 12px;
+        color: #fef2f2;
+        font-size: 26px;
+        font-weight: 700;
+        text-align: center;
+        box-shadow: 0 0 30px rgba(220, 38, 38, 0.3);
+        border: 1px solid rgba(248, 113, 113, 0.3);
+    }
+    .signal-neutral {
+        background: linear-gradient(135deg, #78350f, #d97706);
+        padding: 22px;
+        border-radius: 12px;
+        color: #fffbeb;
+        font-size: 26px;
+        font-weight: 700;
+        text-align: center;
+        box-shadow: 0 0 30px rgba(217, 119, 6, 0.3);
+        border: 1px solid rgba(251, 191, 36, 0.3);
+    }
+
+    /* ── Expiry Badge ────────────────────────────────────────── */
+    .expiry-badge {
+        background: rgba(59, 130, 246, 0.15);
+        color: #60a5fa;
+        padding: 6px 16px;
+        border-radius: 20px;
+        font-weight: 600;
+        border: 1px solid rgba(59, 130, 246, 0.3);
+    }
+
+    /* ── Cards / Containers ──────────────────────────────────── */
+    .stExpander {
+        background: rgba(30, 41, 59, 0.5) !important;
+        border: 1px solid rgba(100, 116, 139, 0.2) !important;
+        border-radius: 12px !important;
+    }
+
+    /* ── Metrics ─────────────────────────────────────────────── */
+    [data-testid="stMetricValue"] {
+        font-size: 28px !important;
+        font-weight: 700 !important;
+        color: #f1f5f9 !important;
+    }
+    [data-testid="stMetricDelta"] > div {
+        font-size: 14px !important;
+    }
+
+    /* ── Sidebar ─────────────────────────────────────────────── */
+    section[data-testid="stSidebar"] {
+        background: linear-gradient(180deg, #0f172a 0%, #1e293b 100%) !important;
+        border-right: 1px solid rgba(100, 116, 139, 0.2) !important;
+    }
+
+    /* ── Tabs ────────────────────────────────────────────────── */
+    .stTabs [data-baseweb="tab"] {
+        color: #94a3b8 !important;
+    }
+    .stTabs [aria-selected="true"] {
+        color: #60a5fa !important;
+        border-bottom-color: #3b82f6 !important;
+    }
+
+    /* ── Buttons ─────────────────────────────────────────────── */
+    .stButton > button {
+        background: rgba(30, 41, 59, 0.8) !important;
+        color: #e2e8f0 !important;
+        border: 1px solid rgba(100, 116, 139, 0.3) !important;
+        border-radius: 8px !important;
+        transition: all 0.2s ease !important;
+    }
+    .stButton > button:hover {
+        background: rgba(59, 130, 246, 0.2) !important;
+        border-color: #3b82f6 !important;
+        box-shadow: 0 0 15px rgba(59, 130, 246, 0.15) !important;
+    }
+
+    /* ── Dividers ─────────────────────────────────────────────── */
+    hr {
+        border-color: rgba(100, 116, 139, 0.2) !important;
+    }
+
+    /* ── Disclaimer bar ──────────────────────────────────────── */
+    .disclaimer {
+        background: rgba(30, 41, 59, 0.6);
+        border: 1px solid rgba(100, 116, 139, 0.15);
+        border-radius: 8px;
+        padding: 10px 16px;
+        text-align: center;
+        color: #64748b;
+        font-size: 12px;
+        margin-top: 40px;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -39,12 +169,13 @@ def main():
 
     # ── Sidebar ────────────────────────────────────────────────────────────────
     with st.sidebar:
-        st.header("Controls")
+        st.header("⚙️ Controls")
         data_source = st.radio("Data Source", ["Demo Mode", "Yahoo Finance (real)"], index=1)
         timeframe_label = st.selectbox("Timeframe (for indicators)", [
             "Daily (5d)", "Hourly (5d)", "30 min (2d)", "15 min (1d)"
         ])
         paper_enabled = st.checkbox("Enable Paper Trading", value=False)
+        show_chart = st.checkbox("Show Professional Chart", value=True)
         auto_refresh = st.checkbox("Auto-refresh every 60s", value=False)
 
         period, interval = {
@@ -54,11 +185,15 @@ def main():
             "15 min (1d)":  ("1d", "15m"),
         }[timeframe_label]
 
+        st.markdown("---")
+        st.caption("📊 SPY Iron Condor Pro v2.1")
+        st.caption("⚠️ Educational tool — not financial advice")
+
     # ── Data loading ───────────────────────────────────────────────────────────
     with st.spinner("Fetching market & options data..."):
         df = get_spy_data(period=period, interval=interval)
         if df.empty:
-            st.warning("No price data loaded – using fallback price")
+            st.warning("No price data loaded — using fallback price")
             current_price = 580.0
         else:
             df = calculate_indicators(df)
@@ -70,7 +205,7 @@ def main():
             options_data = generate_demo_options_data()
 
         if not options_data:
-            st.warning("No options chain loaded – using demo chain")
+            st.warning("No options chain loaded — using demo chain")
             options_data = generate_demo_options_data()
 
     expirations = sorted(options_data.keys())
@@ -84,15 +219,21 @@ def main():
     display_signal_box(signal)
     st.markdown("---")
 
+    # ── Professional Chart ─────────────────────────────────────────────────────
+    if show_chart and not df.empty:
+        display_professional_chart(df, current_price, entry_score, risk_score)
+        st.markdown("---")
+
     # ── Recommended Iron Condor setups ─────────────────────────────────────────
     st.subheader("🎯 Recommended Iron Condor Setups")
     col1, col2, col3 = st.columns(3)
 
     deltas = [0.16, 0.20, 0.30]
-    labels = ["Conservative (16Δ)", "Balanced (20Δ)", "Aggressive (30Δ)"]
+    labels = ["Conservative (16Δ)", "Balanced (20Δ) ⭐", "Aggressive (30Δ)"]
+    columns = [col1, col2, col3]
 
-    for i, (delta, label) in enumerate(zip(deltas, labels)):
-        with locals()[f"col{i+1}"]:
+    for col, delta, label in zip(columns, deltas, labels):
+        with col:
             with st.expander(label, expanded=(delta == 0.20)):
                 setup = find_iron_condor_strikes(
                     options_data, selected_expiry, current_price, target_delta=delta
@@ -124,6 +265,15 @@ def main():
             current_price=current_price,
             selected_expiry=selected_expiry
         )
+
+    # ── Footer ─────────────────────────────────────────────────────────────────
+    st.markdown(
+        '<div class="disclaimer">'
+        '⚠️ This tool is for educational & informational purposes only. '
+        'It does not constitute financial advice. Trade at your own risk.'
+        '</div>',
+        unsafe_allow_html=True
+    )
 
     # ── Auto-refresh ───────────────────────────────────────────────────────────
     if auto_refresh:

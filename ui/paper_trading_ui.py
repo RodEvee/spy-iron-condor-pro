@@ -4,12 +4,6 @@ import pandas as pd
 from datetime import datetime
 from src.paper import PaperTradingPortfolio
 
-def initialize_paper_trading():
-    if 'paper_portfolio' not in st.session_state:
-        st.session_state.paper_portfolio = PaperTradingPortfolio(initial_cash=10000.0)
-    if 'paper_trading_enabled' not in st.session_state:
-        st.session_state.paper_trading_enabled = False
-
 
 def display_paper_trading_dashboard(portfolio: PaperTradingPortfolio):
     """Main dashboard overview"""
@@ -21,7 +15,6 @@ def display_paper_trading_dashboard(portfolio: PaperTradingPortfolio):
 
     st.markdown("## 📈 Paper Trading Dashboard")
 
-    # Account cards
     col1, col2, col3, col4 = st.columns(4)
 
     with col1:
@@ -38,6 +31,11 @@ def display_paper_trading_dashboard(portfolio: PaperTradingPortfolio):
     with col4:
         st.metric("Open Positions", stats['open_positions'])
 
+    # Trade history summary
+    if stats['closed_trades'] > 0:
+        st.markdown("---")
+        st.caption(f"📊 {stats['closed_trades']} closed trades | {stats['total_trades']} total trades")
+
     st.markdown("---")
 
 
@@ -49,8 +47,7 @@ def display_open_position_form(options_data, current_price, selected_expiry, ic_
         st.warning("No valid Iron Condor setups available yet.")
         return
 
-    # Simple selector – expand to tabs/cards later
-    setup_options = [f"{i+1}: {s['pop']}% POP – Δ {s['target_delta']}" for i, s in enumerate(ic_setups)]
+    setup_options = [f"{i+1}: {s['pop']}% POP — Δ {s['target_delta']}" for i, s in enumerate(ic_setups)]
     choice = st.selectbox("Select Setup", setup_options)
 
     if choice:
@@ -112,9 +109,26 @@ def display_positions_table(portfolio: PaperTradingPortfolio, options_data, curr
     df = pd.DataFrame(data)
     st.dataframe(df, use_container_width=True, hide_index=True)
 
+    # Close position buttons
+    st.markdown("---")
+    st.subheader("Close a Position")
+    if portfolio.positions:
+        pos_choice = st.selectbox("Select Position to Close",
+                                  [f"#{p['id']} — Credit ${p['entry_credit']:,.2f}" for p in portfolio.positions])
+        close_pct = st.slider("Close at % of max profit", 0, 100, 50) / 100
+        if st.button("Close Position", type="secondary"):
+            pos_id = int(pos_choice.split("#")[1].split(" ")[0])
+            success, msg = portfolio.close_position(pos_id, close_pct)
+            if success:
+                st.success(msg)
+                st.rerun()
+            else:
+                st.error(msg)
+
 
 def display_paper_trading_panel(options_data, current_price, selected_expiry):
     """Main entry point – call this from app.py"""
+    from src.paper import initialize_paper_trading
     initialize_paper_trading()
 
     portfolio = st.session_state.paper_portfolio
@@ -128,7 +142,6 @@ def display_paper_trading_panel(options_data, current_price, selected_expiry):
         display_positions_table(portfolio, options_data, current_price)
 
     with tab3:
-        # Compute setups if not passed
         from src.analysis import find_iron_condor_strikes
         ic_setups = []
         for delta in [0.16, 0.20, 0.30]:

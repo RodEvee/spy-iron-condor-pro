@@ -2,7 +2,7 @@ import pandas as pd
 import numpy as np
 
 def calculate_indicators(df):
-    if len(df) < 20:
+    if len(df) < 5:
         return df
 
     # Bollinger Bands
@@ -16,8 +16,25 @@ def calculate_indicators(df):
     delta = df['Close'].diff()
     gain = delta.where(delta > 0, 0).rolling(14, min_periods=1).mean()
     loss = -delta.where(delta < 0, 0).rolling(14, min_periods=1).mean()
-    rs = gain / loss.replace(0, np.nan).fillna(0.0001)
+    rs = gain / loss.replace(0, np.nan)
+    rs = rs.fillna(0)
     df['RSI'] = 100 - (100 / (1 + rs))
+    df['RSI'] = df['RSI'].clip(0, 100).fillna(50)
+
+    # MACD (12/26/9)
+    ema12 = df['Close'].ewm(span=12, adjust=False, min_periods=1).mean()
+    ema26 = df['Close'].ewm(span=26, adjust=False, min_periods=1).mean()
+    df['MACD'] = ema12 - ema26
+    df['MACD_signal'] = df['MACD'].ewm(span=9, adjust=False, min_periods=1).mean()
+    df['MACD_hist'] = df['MACD'] - df['MACD_signal']
+
+    # ATR (14-period) & ATR %
+    high_low = df['High'] - df['Low']
+    high_close = (df['High'] - df['Close'].shift()).abs()
+    low_close = (df['Low'] - df['Close'].shift()).abs()
+    true_range = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
+    df['ATR'] = true_range.rolling(14, min_periods=1).mean()
+    df['ATR_pct'] = (df['ATR'] / df['Close']) * 100
 
     # Fill NaNs safely
     df = df.bfill().ffill().fillna(0)
@@ -26,7 +43,7 @@ def calculate_indicators(df):
 
 
 def calculate_iron_condor_score(df, current_price):
-    if len(df) < 20:
+    if len(df) < 5:
         return 0, 9, "NEUTRAL"
 
     latest = df.iloc[-1]
@@ -53,6 +70,16 @@ def calculate_iron_condor_score(df, current_price):
     if 'BB_width' in latest:
         if latest['BB_width'] < 5: entry += 2
         elif latest['BB_width'] > 10: risk += 2
+
+    # MACD — weak trend favors IC
+    if 'MACD' in latest:
+        if abs(latest['MACD']) < 1: entry += 1
+        elif abs(latest['MACD']) > 3: risk += 1
+
+    # ATR% — low vol favors IC
+    if 'ATR_pct' in latest:
+        if latest['ATR_pct'] < 1.0: entry += 1
+        elif latest['ATR_pct'] > 2.5: risk += 1
 
     signal = "NEUTRAL"
     if entry >= 5 and risk <= 3:
@@ -89,7 +116,7 @@ def find_iron_condor_strikes(options_data, expiration, current_price, target_del
     if not short_call or not short_put:
         return None
 
-    # Simple long legs (next strike)
+    # Long legs (next strike out)
     long_call = next((c for c in calls if c['strike'] > short_call['strike']), None)
     long_put  = next((p for p in puts  if p['strike'] < short_put['strike']),  None)
 
@@ -100,7 +127,13 @@ def find_iron_condor_strikes(options_data, expiration, current_price, target_del
     width = max(long_call['strike'] - short_call['strike'], short_put['strike'] - long_put['strike'])
     max_loss = width * 100 - credit
 
-    pop = round((1 - abs(short_call.get('greeks', {}).get('delta', 0.3)) - abs(short_put.get('greeks', {}).get('delta', 0.3))) * 100, 1)
+    pop = round((1 - abs(short_call.get('greeks', {}).get('delta', 0.3))
+                   - abs(short_put.get('greeks', {}).get('delta', 0.3))) * 100, 1)
+
+    # Breakeven calculations
+    credit_per_share = credit / 100
+    breakeven_upper = short_call['strike'] + credit_per_share
+    breakeven_lower = short_put['strike'] - credit_per_share
 
     return {
         'short_call': short_call,
@@ -109,5 +142,7 @@ def find_iron_condor_strikes(options_data, expiration, current_price, target_del
         'long_put': long_put,
         'max_profit': max(credit, 0),
         'max_loss': max(max_loss, 0),
-        'pop': pop
+        'pop': pop,
+        'breakeven_upper': round(breakeven_upper, 2),
+        'breakeven_lower': round(breakeven_lower, 2),
     }
