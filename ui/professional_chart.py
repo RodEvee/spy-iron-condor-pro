@@ -173,45 +173,78 @@ def display_professional_chart(df, current_price, entry_score, risk_score):
             showlegend=True
         ), row=1, col=1)
     
-    # Add ENTRY signals (Green UP arrows)
-    if entry_signal:
-        # Add arrow at current price
+    # ── Compute HISTORICAL entry & exit signals per bar ──────────────────
+    entry_mask = pd.Series(False, index=df.index)
+    exit_mask = pd.Series(False, index=df.index)
+
+    if 'RSI' in df.columns and 'BB_lower' in df.columns and 'BB_upper' in df.columns:
+        bb_range = (df['BB_upper'] - df['BB_lower']).replace(0, np.nan)
+        bb_pos = ((df['Close'] - df['BB_lower']) / bb_range * 100).fillna(50)
+        rsi_ok   = df['RSI'].between(40, 60)
+        bb_ok    = bb_pos.between(30, 70)
+        macd_ok  = df['MACD'].abs() < 2 if 'MACD' in df.columns else True
+        atr_ok   = df['ATR_pct'] < 2.0 if 'ATR_pct' in df.columns else True
+
+        entry_mask = rsi_ok & bb_ok & macd_ok & atr_ok
+        exit_mask  = (~rsi_ok & ~bb_ok) | (df.get('ATR_pct', pd.Series(1, index=df.index)) > 3)
+
+    # Plot ENTRY arrows (green triangles)
+    if entry_mask.any():
+        entry_dates  = df.index[entry_mask]
+        entry_prices = df.loc[entry_mask, 'Low'] * 0.997  # just below the low
         fig.add_trace(go.Scatter(
-            x=[df.index[-1]],
-            y=[current_price * 0.98],  # Slightly below price
-            mode='markers+text',
+            x=entry_dates,
+            y=entry_prices,
+            mode='markers',
             marker=dict(
                 symbol='triangle-up',
-                size=20,
-                color='#00FF00',
-                line=dict(color='darkgreen', width=2)
+                size=14,
+                color='#00e676',
+                line=dict(color='#00c853', width=1.5)
             ),
-            text=['ENTER'],
-            textposition='bottom center',
-            textfont=dict(size=12, color='darkgreen', family='Arial Black'),
-            name='Entry Signal',
-            showlegend=False
+            name='⬆ ENTRY',
+            showlegend=True,
+            hovertemplate='ENTRY<br>%{x}<extra></extra>',
         ), row=1, col=1)
-    
-    # Add EXIT signals (Red DOWN arrows)
-    if exit_signal:
-        # Add arrow at current price
+
+    # Plot EXIT arrows (red triangles)
+    if exit_mask.any():
+        exit_dates  = df.index[exit_mask]
+        exit_prices = df.loc[exit_mask, 'High'] * 1.003  # just above the high
         fig.add_trace(go.Scatter(
-            x=[df.index[-1]],
-            y=[current_price * 1.02],  # Slightly above price
-            mode='markers+text',
+            x=exit_dates,
+            y=exit_prices,
+            mode='markers',
             marker=dict(
                 symbol='triangle-down',
-                size=20,
-                color='#FF0000',
-                line=dict(color='darkred', width=2)
+                size=14,
+                color='#ff1744',
+                line=dict(color='#d50000', width=1.5)
             ),
-            text=['EXIT'],
-            textposition='top center',
-            textfont=dict(size=12, color='darkred', family='Arial Black'),
-            name='Exit Signal',
-            showlegend=False
+            name='⬇ EXIT',
+            showlegend=True,
+            hovertemplate='EXIT / AVOID<br>%{x}<extra></extra>',
         ), row=1, col=1)
+
+    # Also add a prominent annotation arrow for the CURRENT signal
+    if entry_signal:
+        fig.add_annotation(
+            x=df.index[-1], y=current_price * 0.993,
+            text='⬆ ENTER NOW', showarrow=True, arrowhead=2,
+            arrowsize=1.5, arrowwidth=2, arrowcolor='#00e676',
+            font=dict(size=13, color='#00e676', family='Arial Black'),
+            bgcolor='rgba(0,230,118,0.15)', bordercolor='#00e676',
+            row=1, col=1
+        )
+    if exit_signal:
+        fig.add_annotation(
+            x=df.index[-1], y=current_price * 1.007,
+            text='⬇ EXIT NOW', showarrow=True, arrowhead=2,
+            arrowsize=1.5, arrowwidth=2, arrowcolor='#ff1744',
+            font=dict(size=13, color='#ff1744', family='Arial Black'),
+            bgcolor='rgba(255,23,68,0.15)', bordercolor='#ff1744',
+            row=1, col=1
+        )
     
     # Row 2: RSI
     if 'RSI' in df.columns:
@@ -300,7 +333,7 @@ def display_professional_chart(df, current_price, entry_score, risk_score):
     
     # Update layout with zoom and interaction features
     fig.update_layout(
-        height=1200,
+        height=900,
         showlegend=True,
         legend=dict(
             orientation="h",
@@ -354,92 +387,92 @@ def display_professional_chart(df, current_price, entry_score, risk_score):
     
     st.plotly_chart(fig, use_container_width=True, config=config)
     
-    # Overall Signal Assessment
+    # Overall Signal Assessment (collapsible to save space on mobile)
     st.markdown("---")
-    st.markdown("### 🎯 Overall Iron Condor Signal Assessment")
+    with st.expander("🎯 Overall Iron Condor Signal Assessment", expanded=True):
     
-    col1, col2 = st.columns([2, 3])
+        col1, col2 = st.columns([2, 3])
     
-    with col1:
-        # Count favorable conditions
-        conditions = []
-        if 40 <= rsi <= 60:
-            conditions.append("✅ RSI in neutral zone")
-        else:
-            conditions.append("❌ RSI extreme")
-        
-        if atr_pct < 2:
-            conditions.append("✅ Low volatility")
-        elif atr_pct < 3:
-            conditions.append("🟡 Moderate volatility")
-        else:
-            conditions.append("❌ High volatility")
-        
-        if 30 <= bb_position <= 70:
-            conditions.append("✅ Price in BB middle")
-        else:
-            conditions.append("❌ Price at BB edge")
-        
-        if abs(macd) < 2:
-            conditions.append("✅ Weak trend")
-        else:
-            conditions.append("❌ Strong trend")
-        
-        # Volume check with safety for NaN
-        vol_ma = df['Volume'].rolling(20).mean().iloc[-1] if len(df) >= 20 else df['Volume'].mean()
-        if pd.notna(vol_ma) and pd.notna(volume) and volume < vol_ma * 1.2:
-            conditions.append("✅ Normal volume")
-        elif pd.notna(vol_ma) and pd.notna(volume):
-            conditions.append("🟡 High volume")
-        else:
-            conditions.append("🟡 Volume N/A")
-        
-        green_count = sum(1 for c in conditions if c.startswith("✅"))
-        
-        st.markdown(f"**Score: {green_count}/5 Favorable**")
-        
-        for condition in conditions:
-            st.markdown(condition)
-    
-    with col2:
-        if green_count >= 4:
-            st.success(f"""
-            **🟢 STRONG ENTRY SIGNAL**
-            
-            **Recommendation:** Open Iron Condor position now
-            
-            **Setup:** Use the BALANCED (20Δ) setup below
-            - Conservative: 16Δ for higher win rate
-            - Aggressive: 30Δ for more premium
-            
-            **Entry Score:** {entry_score}/10
-            **Risk Score:** {risk_score}/10
-            """)
-        elif green_count >= 3:
-            st.warning(f"""
-            **🟡 MODERATE SIGNAL**
-            
-            **Recommendation:** Consider waiting for better conditions
-            
-            **What to watch:**
-            - Wait for RSI to reach 40-60
-            - Watch for volatility to drop below 2%
-            - Ensure price moves to middle of Bollinger Bands
-            
-            **Entry Score:** {entry_score}/10
-            **Risk Score:** {risk_score}/10
-            """)
-        else:
-            st.error(f"""
-            **🔴 AVOID / EXIT**
-            
-            **Recommendation:** Do NOT enter new positions
-            
-            **Issues:**
-            - Too many unfavorable conditions
-            - High risk environment for Iron Condors
-            - If holding positions, consider closing
-            
-            **Entry Score:** {entry_score}/10
-            **Risk Score:** {risk_score}/10
-            """)
+        with col1:
+            # Count favorable conditions
+            conditions = []
+            if 40 <= rsi <= 60:
+                conditions.append("✅ RSI in neutral zone")
+            else:
+                conditions.append("❌ RSI extreme")
+
+            if atr_pct < 2:
+                conditions.append("✅ Low volatility")
+            elif atr_pct < 3:
+                conditions.append("🟡 Moderate volatility")
+            else:
+                conditions.append("❌ High volatility")
+
+            if 30 <= bb_position <= 70:
+                conditions.append("✅ Price in BB middle")
+            else:
+                conditions.append("❌ Price at BB edge")
+
+            if abs(macd) < 2:
+                conditions.append("✅ Weak trend")
+            else:
+                conditions.append("❌ Strong trend")
+
+            # Volume check with safety for NaN
+            vol_ma = df['Volume'].rolling(20).mean().iloc[-1] if len(df) >= 20 else df['Volume'].mean()
+            if pd.notna(vol_ma) and pd.notna(volume) and volume < vol_ma * 1.2:
+                conditions.append("✅ Normal volume")
+            elif pd.notna(vol_ma) and pd.notna(volume):
+                conditions.append("🟡 High volume")
+            else:
+                conditions.append("🟡 Volume N/A")
+
+            green_count = sum(1 for c in conditions if c.startswith("✅"))
+
+            st.markdown(f"**Score: {green_count}/5 Favorable**")
+
+            for condition in conditions:
+                st.markdown(condition)
+
+        with col2:
+            if green_count >= 4:
+                st.success(f"""
+                **🟢 STRONG ENTRY SIGNAL**
+
+                **Recommendation:** Open Iron Condor position now
+
+                **Setup:** Use the BALANCED (20Δ) setup below
+                - Conservative: 16Δ for higher win rate
+                - Aggressive: 30Δ for more premium
+
+                **Entry Score:** {entry_score}/10
+                **Risk Score:** {risk_score}/10
+                """)
+            elif green_count >= 3:
+                st.warning(f"""
+                **🟡 MODERATE SIGNAL**
+
+                **Recommendation:** Consider waiting for better conditions
+
+                **What to watch:**
+                - Wait for RSI to reach 40-60
+                - Watch for volatility to drop below 2%
+                - Ensure price moves to middle of Bollinger Bands
+
+                **Entry Score:** {entry_score}/10
+                **Risk Score:** {risk_score}/10
+                """)
+            else:
+                st.error(f"""
+                **🔴 AVOID / EXIT**
+
+                **Recommendation:** Do NOT enter new positions
+
+                **Issues:**
+                - Too many unfavorable conditions
+                - High risk environment for Iron Condors
+                - If holding positions, consider closing
+
+                **Entry Score:** {entry_score}/10
+                **Risk Score:** {risk_score}/10
+                """)

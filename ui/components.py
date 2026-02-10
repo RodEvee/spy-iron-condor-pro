@@ -59,24 +59,33 @@ def display_current_metrics(df, current_price: float, entry_score: int, risk_sco
 
 
 def display_expiry_selector(expirations: list):
-    """Horizontal buttons for expiration selection"""
-    st.subheader("📅 Select Expiration")
-
+    """Compact dropdown for expiration selection"""
     if not expirations:
         st.warning("No expirations available")
         return None
 
-    cols = st.columns(min(6, len(expirations)))
     selected = st.session_state.get("selected_expiry", expirations[0])
+    if selected not in expirations:
+        selected = expirations[0]
 
-    for i, exp in enumerate(expirations[:12]):
+    # Build labels with DTE
+    options = []
+    for exp in expirations[:12]:
         dte = (datetime.strptime(exp, '%Y-%m-%d') - datetime.now()).days
-        label = f"{exp}\n({dte}d)"
-        key = f"exp_select_{exp}"
+        options.append(f"{exp}  ({dte}d)")
 
-        if cols[i % len(cols)].button(label, key=key, use_container_width=True):
-            st.session_state.selected_expiry = exp
-            st.rerun()
+    default_idx = 0
+    for i, opt in enumerate(options):
+        if selected in opt:
+            default_idx = i
+            break
 
-    st.markdown(f"**Active:** <span class='expiry-badge'>{selected}</span>", unsafe_allow_html=True)
-    return selected
+    choice = st.selectbox("📅 Expiration", options, index=default_idx, key="expiry_dropdown")
+
+    # Extract date from the label
+    chosen_date = choice.split("  ")[0]
+    if chosen_date != selected:
+        st.session_state.selected_expiry = chosen_date
+
+    return chosen_date
+

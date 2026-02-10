@@ -161,6 +161,149 @@ st.markdown("""
         font-size: 12px;
         margin-top: 40px;
     }
+
+    /* ════════════════════════════════════════════════════════════
+       MOBILE RESPONSIVE — Tablets & below (≤768px)
+       ════════════════════════════════════════════════════════════ */
+    @media (max-width: 768px) {
+        /* ── Shrink header ─────────────────────────────────────── */
+        .main-header {
+            font-size: 26px !important;
+            margin-bottom: 2px !important;
+        }
+        .sub-header {
+            font-size: 11px !important;
+            letter-spacing: 1px !important;
+            margin-bottom: 16px !important;
+        }
+
+        /* ── Compact signal boxes ──────────────────────────────── */
+        .signal-strong-entry,
+        .signal-exit,
+        .signal-neutral {
+            font-size: 18px !important;
+            padding: 14px 12px !important;
+            border-radius: 8px !important;
+        }
+
+        /* ── Smaller metric values ─────────────────────────────── */
+        [data-testid="stMetricValue"] {
+            font-size: 20px !important;
+        }
+        [data-testid="stMetricLabel"] {
+            font-size: 11px !important;
+        }
+        [data-testid="stMetricDelta"] > div {
+            font-size: 11px !important;
+        }
+
+        /* ── Compact expiry buttons ────────────────────────────── */
+        .stButton > button {
+            padding: 6px 8px !important;
+            font-size: 11px !important;
+            min-height: 0 !important;
+        }
+        .stButton > button p {
+            font-size: 11px !important;
+            line-height: 1.3 !important;
+            margin: 0 !important;
+        }
+
+        /* ── Tighter containers ────────────────────────────────── */
+        .stExpander {
+            border-radius: 8px !important;
+        }
+        .stExpander summary {
+            font-size: 14px !important;
+        }
+
+        /* ── Reduce block padding ──────────────────────────────── */
+        .block-container {
+            padding-left: 12px !important;
+            padding-right: 12px !important;
+            padding-top: 16px !important;
+        }
+
+        /* ── Compact info/success/warning boxes ────────────────── */
+        .stAlert {
+            padding: 8px 12px !important;
+            font-size: 13px !important;
+        }
+
+        /* ── Compact disclaimer ────────────────────────────────── */
+        .disclaimer {
+            font-size: 10px !important;
+            padding: 8px 10px !important;
+            margin-top: 20px !important;
+        }
+
+        /* ── Chart height override ─────────────────────────────── */
+        [data-testid="stPlotlyChart"] {
+            max-height: 600px !important;
+        }
+        [data-testid="stPlotlyChart"] > div {
+            max-height: 600px !important;
+        }
+
+        /* ── Sidebar adjustments ───────────────────────────────── */
+        section[data-testid="stSidebar"] {
+            min-width: 200px !important;
+            max-width: 260px !important;
+        }
+        section[data-testid="stSidebar"] .block-container {
+            padding: 16px 12px !important;
+        }
+
+        /* ── Tabs compact ──────────────────────────────────────── */
+        .stTabs [data-baseweb="tab"] {
+            font-size: 13px !important;
+            padding: 8px 12px !important;
+        }
+    }
+
+    /* ════════════════════════════════════════════════════════════
+       SMALL MOBILE — Phones (≤480px)
+       ════════════════════════════════════════════════════════════ */
+    @media (max-width: 480px) {
+        .main-header {
+            font-size: 22px !important;
+        }
+        .sub-header {
+            font-size: 9px !important;
+            letter-spacing: 0.5px !important;
+            margin-bottom: 12px !important;
+        }
+
+        .signal-strong-entry,
+        .signal-exit,
+        .signal-neutral {
+            font-size: 16px !important;
+            padding: 10px 8px !important;
+        }
+
+        [data-testid="stMetricValue"] {
+            font-size: 18px !important;
+        }
+
+        .block-container {
+            padding-left: 8px !important;
+            padding-right: 8px !important;
+            padding-top: 10px !important;
+        }
+
+        /* ── Stack columns vertically with less gap ────────────── */
+        [data-testid="stHorizontalBlock"] {
+            gap: 4px !important;
+        }
+
+        .stButton > button {
+            padding: 4px 6px !important;
+            font-size: 10px !important;
+        }
+        .stButton > button p {
+            font-size: 10px !important;
+        }
+    }
 </style>
 """, unsafe_allow_html=True)
 
